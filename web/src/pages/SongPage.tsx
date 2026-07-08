@@ -27,6 +27,16 @@ interface TrackInfo {
   mute: boolean
   solo: boolean
   visible: boolean
+  volume: number
+}
+
+function trackIcon(name: string): string {
+  if (name.includes('드럼')) return '🥁'
+  if (name.includes('키보드') || name.includes('피아노')) return '🎹'
+  if (name.includes('브라스') || name.includes('트럼펫')) return '🎺'
+  if (name.includes('베이스')) return '🎸'
+  if (name.includes('보컬')) return '🎤'
+  return '🎸'
 }
 
 const SPEED_PRESETS = [15, 25, 50, 75, 100, 125, 150, 175]
@@ -160,10 +170,13 @@ export default function SongPage() {
           mute: false,
           solo: false,
           visible: t.index === 0,
+          volume: 100,
         })),
       )
       setScoreMeta({ title: score.title, artist: score.artist })
       setTuning([...(score.tracks[0]?.staves[0]?.tuning ?? [])])
+      // 멀티트랙 곡은 믹서를 자동으로 열어 전 세션을 한눈에
+      if (score.tracks.length > 1) setPanel('tracks')
     })
     api.renderFinished.on(() => {
       setReady(true)
@@ -766,6 +779,14 @@ export default function SongPage() {
     )
   }
 
+  const changeTrackVol = (index: number, value: number) => {
+    const api = apiRef.current
+    if (!api?.score) return
+    const v = Math.min(150, Math.max(0, value))
+    api.changeTrackVolume([api.score.tracks[index]], v / 100)
+    setTracks((prev) => prev.map((t) => (t.index === index ? { ...t, volume: v } : t)))
+  }
+
   const toggleSolo = (index: number) => {
     const api = apiRef.current
     if (!api?.score) return
@@ -1013,37 +1034,52 @@ export default function SongPage() {
       </div>
 
       {panel === 'tracks' && (
-        <div className="tracks-panel">
-          <div className="panel-title">트랙</div>
+        <div className="tracks-panel mixer">
+          <div className="panel-title">믹서</div>
           {tracks.map((t) => (
             <div key={t.index} className={`track-row ${t.index === activeTrack ? 'active' : ''}`}>
-              <button className="track-name" onClick={() => selectTrack(t.index)}>
+              <span className="track-icon">{trackIcon(t.name)}</span>
+              <button className="track-name" onClick={() => selectTrack(t.index)} title="이 트랙 악보 보기">
                 {t.name}
               </button>
-              <button
-                className={`chip ${t.visible ? 'on' : ''}`}
-                onClick={() => toggleMultiTrack(t.index)}
-                title="멀티트랙 표시 (여러 트랙 동시 보기)"
-              >
-                👁
-              </button>
+              <input
+                className="track-vol"
+                type="range"
+                min={0}
+                max={150}
+                value={t.volume}
+                disabled={isOriginal}
+                onChange={(e) => changeTrackVol(t.index, Number(e.target.value))}
+                title={`볼륨 ${t.volume}%`}
+              />
               <button
                 className={`chip ${t.solo ? 'on' : ''}`}
                 onClick={() => toggleSolo(t.index)}
-                title="솔로"
+                disabled={isOriginal}
+                title="솔로 — 이 트랙만 듣기"
               >
                 S
               </button>
               <button
                 className={`chip ${t.mute ? 'on' : ''}`}
                 onClick={() => toggleMute(t.index)}
+                disabled={isOriginal}
                 title="뮤트"
               >
                 M
               </button>
+              <button
+                className={`chip ${t.visible ? 'on' : ''}`}
+                onClick={() => toggleMultiTrack(t.index)}
+                title="악보에 표시 (여러 개 켜면 동시 보기)"
+              >
+                👁
+              </button>
             </div>
           ))}
-          <p className="panel-note">👁 를 여러 개 켜면 트랙을 동시에 볼 수 있습니다.</p>
+          <p className="panel-note">
+            S = 그 악기만 듣기 · M = 끄기 · 슬라이더 = 개별 볼륨 · 👁 = 악보 동시 보기
+          </p>
         </div>
       )}
 

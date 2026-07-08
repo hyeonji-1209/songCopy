@@ -1253,3 +1253,25 @@ kbd {
   font-size: 13px;
   padding: 8px 0;
 }
+
+/* ── 믹서 ───────────────────────────────────── */
+.tracks-panel.mixer {
+  min-width: 380px;
+}
+
+.track-icon {
+  font-size: 16px;
+  width: 24px;
+  text-align: center;
+  flex: none;
+}
+
+.track-vol {
+  width: 90px;
+  flex: none;
+  accent-color: var(--green);
+}
+
+.track-vol:disabled {
+  opacity: 0.35;
+}

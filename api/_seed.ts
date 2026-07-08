@@ -15,7 +15,7 @@ export const SONGS: SongDef[] = [
     slug: 'beethoven-ode-to-joy',
     title: 'Ode to Joy',
     artist: 'Ludwig van Beethoven',
-    instruments: ['기타', '키보드', '베이스', '드럼'],
+    instruments: ['기타', '키보드', '베이스', '브라스', '드럼'],
     revisionDate: '2026. 7. 8.',
     tex: `\\title "Ode to Joy"
 \\subtitle "Ludwig van Beethoven"
@@ -56,6 +56,17 @@ export const SONGS: SongDef[] = [
 3.4 3.4 |
 3.3 3.4 |
 3.4 3.3
+\\track "브라스"
+\\staff {score}
+\\instrument 56
+:1 e4 |
+g4 |
+g4 |
+g4 |
+e4 |
+g4 |
+g4 |
+:2 d4 e4
 \\track "드럼"
 \\instrument percussion
 \\articulation defaults
@@ -73,7 +84,7 @@ export const SONGS: SongDef[] = [
     slug: 'traditional-twinkle-twinkle-little-star',
     title: 'Twinkle Twinkle Little Star',
     artist: 'Traditional',
-    instruments: ['기타', '키보드', '베이스', '드럼'],
+    instruments: ['기타', '키보드', '베이스', '브라스', '드럼'],
     revisionDate: '2026. 7. 8.',
     tex: `\\title "Twinkle Twinkle Little Star"
 \\subtitle "Traditional"
@@ -128,6 +139,21 @@ export const SONGS: SongDef[] = [
 1.4 3.3 |
 1.4 3.3 |
 3.4 3.3
+\\track "브라스"
+\\staff {score}
+\\instrument 56
+:2 g4 g4 |
+a4 g4 |
+a4 g4 |
+d4 e4 |
+g4 a4 |
+g4 d4 |
+g4 a4 |
+g4 d4 |
+g4 g4 |
+a4 g4 |
+a4 g4 |
+d4 e4
 \\track "드럼"
 \\instrument percussion
 \\articulation defaults
@@ -149,7 +175,7 @@ export const SONGS: SongDef[] = [
     slug: 'pierpont-jingle-bells',
     title: 'Jingle Bells',
     artist: 'James Lord Pierpont',
-    instruments: ['기타', '키보드', '베이스', '드럼'],
+    instruments: ['기타', '키보드', '베이스', '브라스', '드럼'],
     revisionDate: '2026. 7. 8.',
     tex: `\\title "Jingle Bells"
 \\subtitle "James Lord Pierpont"
@@ -190,6 +216,17 @@ export const SONGS: SongDef[] = [
 3.3 3.3 |
 3.4 3.4 |
 3.4 3.3
+\\track "브라스"
+\\staff {score}
+\\instrument 56
+:2 g4 g4 |
+g4 g4 |
+g4 g4 |
+g4 d4 |
+a4 a4 |
+g4 g4 |
+d4 d4 |
+d4 e4
 \\track "드럼"
 \\instrument percussion
 \\articulation defaults
