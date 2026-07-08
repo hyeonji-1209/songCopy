@@ -11,6 +11,7 @@ export default function NewTabMenu() {
   const [busy, setBusy] = useState(false)
   const [aiTitle, setAiTitle] = useState('')
   const [aiBpm, setAiBpm] = useState('') // 비우면 자동 감지
+  const [aiSensitivity, setAiSensitivity] = useState('standard')
   const [aiBusy, setAiBusy] = useState(false)
   const audioRef = useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
@@ -24,7 +25,7 @@ export default function NewTabMenu() {
       // 어떤 포맷이든 모노 22kHz wav로 변환해 용량 축소 (긴 곡도 업로드 가능)
       const data = await audioFileToMonoWav(file)
       const bpm = aiBpm.trim() ? Number(aiBpm) : null
-      const { slug } = await postTranscribe(aiTitle.trim(), bpm, data, 'wav')
+      const { slug } = await postTranscribe(aiTitle.trim(), bpm, data, 'wav', aiSensitivity)
       setOpen(false)
       setAiTitle('')
       navigate(`/tab/${slug}`)
@@ -112,6 +113,14 @@ export default function NewTabMenu() {
                 value={aiBpm}
                 onChange={(e) => setAiBpm(e.target.value)}
               />
+            </label>
+            <label className="newtab-bpm">
+              민감도
+              <select value={aiSensitivity} onChange={(e) => setAiSensitivity(e.target.value)}>
+                <option value="precise">정밀 (유령음 최소)</option>
+                <option value="standard">표준 (권장)</option>
+                <option value="dense">촘촘 (모든 음)</option>
+              </select>
             </label>
             <button className="auth-submit" type="submit" disabled={aiBusy || !aiTitle.trim()}>
               {aiBusy ? '채보 중… (악기 분리 포함, 몇 분 걸려요)' : '악보 만들기'}

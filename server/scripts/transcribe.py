@@ -23,7 +23,15 @@ import tempfile
 MELODIC_STEMS = ("vocals", "guitar", "piano", "other", "bass")
 
 
-def notes_from(events, min_amp=0.2):
+# 민감도 프리셋: (onset, frame, 최소음길이ms, 최소amp)
+SENSITIVITY = {
+    "precise": (0.55, 0.32, 90, 0.3),
+    "standard": (0.45, 0.28, 70, 0.25),
+    "dense": (0.4, 0.25, 60, 0.2),
+}
+
+
+def notes_from(events, min_amp):
     return [
         {"start": round(float(s), 4), "end": round(float(e), 4), "midi": int(p), "amp": round(float(a), 3)}
         for s, e, p, a, _bends in sorted(events)
@@ -31,15 +39,59 @@ def notes_from(events, min_amp=0.2):
     ]
 
 
-def predict_dense(predict, path):
-    """민감도를 높인 채보: 낮은 임계값 + 짧은 음(60ms) 허용 → 최대한 많은 음을 잡는다."""
+def clean_notes(notes):
+    """유령 노트 정리: 배음(옥타브) 오검출 제거 + 재트리거 병합 + 상대 신뢰도 필터."""
+    if not notes:
+        return notes
+    notes = sorted(notes, key=lambda n: (n["start"], -n["amp"]))
+
+    # 1) 같은 음 재트리거 병합 (50ms 이내 끊김)
+    merged = []
+    last_by_midi = {}
+    for n in notes:
+        prev = last_by_midi.get(n["midi"])
+        if prev and n["start"] - prev["end"] < 0.05:
+            prev["end"] = max(prev["end"], n["end"])
+            prev["amp"] = max(prev["amp"], n["amp"])
+            continue
+        item = dict(n)
+        merged.append(item)
+        last_by_midi[n["midi"]] = item
+
+    # 2) 옥타브 배음 유령 제거: 동시 시작(±60ms) + 옥타브 관계 + 확연히 약함
+    result = []
+    for i, n in enumerate(merged):
+        ghost = False
+        for m in merged:
+            if m is n:
+                continue
+            if abs(m["start"] - n["start"]) > 0.06:
+                continue
+            if (n["midi"] - m["midi"]) % 12 == 0 and n["midi"] != m["midi"] and n["amp"] < m["amp"] * 0.75:
+                ghost = True
+                break
+        if not ghost:
+            result.append(n)
+
+    # 3) 상대 신뢰도: 트랙 중앙값의 55% 미만이면서 120ms 미만인 짧고 약한 음 제거
+    if result:
+        amps = sorted(x["amp"] for x in result)
+        median = amps[len(amps) // 2]
+        result = [
+            x for x in result if not (x["amp"] < median * 0.55 and (x["end"] - x["start"]) < 0.12)
+        ]
+    return result
+
+
+def predict_notes(predict, path, sensitivity):
+    onset, frame, min_len, min_amp = SENSITIVITY.get(sensitivity, SENSITIVITY["standard"])
     _, _, ev = predict(
         path,
-        onset_threshold=0.4,
-        frame_threshold=0.25,
-        minimum_note_length=60,
+        onset_threshold=onset,
+        frame_threshold=frame,
+        minimum_note_length=min_len,
     )
-    return ev
+    return clean_notes(notes_from(ev, min_amp))
 
 
 def stem_has_content(path):
@@ -112,6 +164,7 @@ def main() -> None:
         print(json.dumps({"error": "audio file required"}))
         sys.exit(1)
     audio = sys.argv[1]
+    sensitivity = sys.argv[2] if len(sys.argv) > 2 else "standard"
 
     buf = io.StringIO()
     out = {"bpm": None, "lyrics": "", "tracks": {k: [] for k in (*MELODIC_STEMS, "drums")}}
@@ -151,8 +204,7 @@ def main() -> None:
                     if not path or not stem_has_content(path):
                         continue
                     try:
-                        ev = predict_dense(predict, path)
-                        notes = notes_from(ev, 0.25 if name != "bass" else 0.2)
+                        notes = predict_notes(predict, path, sensitivity)
                         if len(notes) >= 8:  # 존재 판단: 유의미한 노트 수
                             out["tracks"][name] = notes
                     except Exception:
@@ -167,8 +219,7 @@ def main() -> None:
                 if out["tracks"]["vocals"]:
                     out["lyrics"] = extract_lyrics(stems["vocals"])
             else:
-                ev = predict_dense(predict, audio)
-                out["tracks"]["other"] = notes_from(ev)
+                out["tracks"]["other"] = predict_notes(predict, audio, sensitivity)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

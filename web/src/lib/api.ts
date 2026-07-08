@@ -100,11 +100,17 @@ export const postComment = (slug: string, text: string) =>
 export const deleteComment = (id: number) =>
   req<{ ok: boolean }>(`/api/comments/${id}`, { method: 'DELETE' })
 
-export const postTranscribe = (title: string, bpm: number | null, data: Uint8Array, ext: string) =>
+export const postTranscribe = (
+  title: string,
+  bpm: number | null,
+  data: Uint8Array,
+  ext: string,
+  sensitivity = 'standard',
+) =>
   req<{ slug: string; noteCount: number; bpm: number }>('/api/transcribe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, bpm: bpm ?? undefined, b64: toBase64(data), ext }),
+    body: JSON.stringify({ title, bpm: bpm ?? undefined, b64: toBase64(data), ext, sensitivity }),
   })
 
 export const createSong = (title: string, artist: string) =>

@@ -512,7 +512,11 @@ const server = http.createServer(async (req, res) => {
         artist?: string
         bpm?: number
         ext?: string
+        sensitivity?: string
       }
+      const sensitivity = ['precise', 'standard', 'dense'].includes(body.sensitivity ?? '')
+        ? body.sensitivity!
+        : 'standard'
       const title = body.title?.trim()
       if (!title || !body.b64) return json(res, 400, { error: '제목과 오디오 파일이 필요합니다' })
       const audio = Buffer.from(body.b64, 'base64')
@@ -526,7 +530,7 @@ const server = http.createServer(async (req, res) => {
         // 비동기 spawn: 채보(수 분)가 도는 동안에도 서버가 다른 요청을 처리할 수 있어야 한다
         const proc = await new Promise<{ status: number | null; stdout: string; stderr: string }>(
           (resolve) => {
-            const p = spawn('python3', [script, tmp])
+            const p = spawn('python3', [script, tmp, sensitivity])
             let stdout = ''
             let stderr = ''
             p.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
