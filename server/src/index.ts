@@ -437,8 +437,8 @@ const server = http.createServer(async (req, res) => {
       try {
         const script = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'transcribe.py')
         const proc = spawnSync('python3', [script, tmp], {
-          timeout: 180_000,
-          maxBuffer: 32 * 1024 * 1024,
+          timeout: 300_000,
+          maxBuffer: 64 * 1024 * 1024,
           encoding: 'utf-8',
         })
         if (proc.status !== 0) {

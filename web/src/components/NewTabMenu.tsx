@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createSong, postTranscribe } from '../lib/api'
+import { audioFileToMonoWav } from '../lib/audioConvert'
 import OpenFileButton from './OpenFileButton'
 
 export default function NewTabMenu() {
@@ -20,18 +21,22 @@ export default function NewTabMenu() {
     if (!file || !aiTitle.trim()) return
     setAiBusy(true)
     try {
-      const data = new Uint8Array(await file.arrayBuffer())
-      const ext = file.name.split('.').pop()?.toLowerCase() ?? 'wav'
+      // 어떤 포맷이든 모노 22kHz wav로 변환해 용량 축소 (긴 곡도 업로드 가능)
+      const data = await audioFileToMonoWav(file)
       const bpm = aiBpm.trim() ? Number(aiBpm) : null
-      const { slug } = await postTranscribe(aiTitle.trim(), bpm, data, ext)
+      const { slug } = await postTranscribe(aiTitle.trim(), bpm, data, 'wav')
       setOpen(false)
       setAiTitle('')
       navigate(`/tab/${slug}`)
     } catch (err) {
       if (err instanceof Error && err.message.includes('401')) {
         alert('AI 채보를 사용하려면 로그인이 필요합니다.')
+      } else if (err instanceof Error && err.message.startsWith('API')) {
+        alert(`채보 실패: ${err.message.replace(/^API \d+: /, '')}`)
+      } else if (err instanceof Error && /decod/i.test(err.message)) {
+        alert('오디오 파일을 읽지 못했습니다. 다른 포맷(mp3/wav)으로 시도해보세요.')
       } else {
-        alert('채보에 실패했습니다. (서버의 basic-pitch 설치와 오디오 파일을 확인하세요)')
+        alert('채보에 실패했습니다. (서버의 basic-pitch 설치를 확인하세요)')
       }
     } finally {
       setAiBusy(false)
@@ -111,6 +116,7 @@ export default function NewTabMenu() {
             <button className="auth-submit" type="submit" disabled={aiBusy || !aiTitle.trim()}>
               {aiBusy ? '채보 중… (수십 초 걸려요)' : '악보 만들기'}
             </button>
+            <span className="panel-note">mp3/wav/m4a 등 — 앞 3분까지 분석. BPM 비우면 자동 감지.</span>
           </form>
           <div className="newtab-divider">또는</div>
           <OpenFileButton className="upload-btn newtab-upload">

@@ -48,7 +48,16 @@ export function toBase64(data: Uint8Array): string {
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init)
-  if (!res.ok) throw new Error(`API ${res.status}: ${path}`)
+  if (!res.ok) {
+    let detail = path
+    try {
+      const data = (await res.json()) as { error?: string }
+      if (data?.error) detail = data.error
+    } catch {
+      /* 본문 없음 */
+    }
+    throw new Error(`API ${res.status}: ${detail}`)
+  }
   return (await res.json()) as T
 }
 
