@@ -117,6 +117,7 @@ export default function SongPage() {
     const api = new alphaTab.AlphaTabApi(sheetRef.current, {
       player: {
         playerMode: alphaTab.PlayerMode.EnabledAutomatic,
+        soundFont: '/soundfont/sonivox.sf3',
         enableCursor: true,
         enableUserInteraction: true,
         scrollElement: viewportRef.current,
@@ -124,6 +125,9 @@ export default function SongPage() {
       },
       core: {
         includeNoteBounds: true,
+        // vite 플러그인이 public/font 로 복사한 자산을 명시 지정
+        // (프로덕션 번들의 자동 경로 추정이 /assets/font 로 어긋나는 문제 방지)
+        fontDirectory: '/font/',
       },
       display: {
         layoutMode: alphaTab.LayoutMode.Page,

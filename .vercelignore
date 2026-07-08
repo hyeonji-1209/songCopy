@@ -1,0 +1,5 @@
+server/
+docs/
+scratchpad/
+**/node_modules
+web/dist
