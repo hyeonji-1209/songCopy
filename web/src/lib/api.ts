@@ -2,6 +2,17 @@ export interface RevisionInfo {
   id: number
   date: string
   author?: string | null
+  source?: string
+  score?: number
+  myVote?: number
+}
+
+export interface CommentInfo {
+  id: number
+  text: string
+  date: string
+  author: string | null
+  mine: boolean
 }
 
 export interface SongMeta {
@@ -52,12 +63,31 @@ export const fetchRevisions = (slug: string) => req<RevisionInfo[]>(`/api/songs/
 export const fetchRevisionContent = (id: number) =>
   req<Extract<SongContent, { type: 'gp' }>>(`/api/revisions/${id}/content`)
 
-export const postRevision = (slug: string, data: Uint8Array) =>
+export const postRevision = (slug: string, data: Uint8Array, source = 'editor') =>
   req<RevisionInfo>(`/api/songs/${slug}/revisions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ b64: toBase64(data) }),
+    body: JSON.stringify({ b64: toBase64(data), source }),
   })
+
+export const voteRevision = (id: number, vote: 1 | -1 | 0) =>
+  req<{ score: number; myVote: number }>(`/api/revisions/${id}/vote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vote }),
+  })
+
+export const fetchComments = (slug: string) => req<CommentInfo[]>(`/api/songs/${slug}/comments`)
+
+export const postComment = (slug: string, text: string) =>
+  req<CommentInfo>(`/api/songs/${slug}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+
+export const deleteComment = (id: number) =>
+  req<{ ok: boolean }>(`/api/comments/${id}`, { method: 'DELETE' })
 
 export const createSong = (title: string, artist: string) =>
   req<{ slug: string }>('/api/songs', {

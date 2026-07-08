@@ -51,6 +51,26 @@ try {
 } catch {
   /* 이미 있음 */
 }
+try {
+  db.exec("ALTER TABLE revisions ADD COLUMN source TEXT DEFAULT 'editor'")
+} catch {
+  /* 이미 있음 */
+}
+db.exec(`
+  CREATE TABLE IF NOT EXISTS revision_votes (
+    revision_id INTEGER NOT NULL REFERENCES revisions(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    vote INTEGER NOT NULL,
+    PRIMARY KEY (revision_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    song_id INTEGER NOT NULL REFERENCES songs(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    text TEXT NOT NULL,
+    date TEXT NOT NULL
+  );
+`)
 
 // 시드: web/src/data/songs.ts 가 단일 소스. 편곡이 갱신되면 기존 행도 업데이트(업서트).
 const insertSong = db.prepare(
@@ -76,9 +96,26 @@ interface SongRow {
 const qList = db.prepare('SELECT * FROM songs ORDER BY title')
 const qBySlug = db.prepare('SELECT * FROM songs WHERE slug = ?')
 const qRevisions = db.prepare(
-  `SELECT r.id, r.date, u.name AS author FROM revisions r
+  `SELECT r.id, r.date, r.source, u.name AS author,
+          COALESCE((SELECT SUM(v.vote) FROM revision_votes v WHERE v.revision_id = r.id), 0) AS score
+   FROM revisions r
    LEFT JOIN users u ON u.id = r.user_id WHERE r.song_id = ? ORDER BY r.id DESC`,
 )
+const qMyVote = db.prepare('SELECT vote FROM revision_votes WHERE revision_id = ? AND user_id = ?')
+const qUpsertVote = db.prepare(
+  `INSERT INTO revision_votes (revision_id, user_id, vote) VALUES (?, ?, ?)
+   ON CONFLICT(revision_id, user_id) DO UPDATE SET vote = excluded.vote`,
+)
+const qDelVote = db.prepare('DELETE FROM revision_votes WHERE revision_id = ? AND user_id = ?')
+const qComments = db.prepare(
+  `SELECT c.id, c.text, c.date, c.user_id, u.name AS author FROM comments c
+   LEFT JOIN users u ON u.id = c.user_id WHERE c.song_id = ? ORDER BY c.id DESC`,
+)
+const qAddComment = db.prepare(
+  'INSERT INTO comments (song_id, user_id, text, date) VALUES (?, ?, ?, ?)',
+)
+const qCommentById = db.prepare('SELECT * FROM comments WHERE id = ?')
+const qDelComment = db.prepare('DELETE FROM comments WHERE id = ?')
 const qLatestRev = db.prepare('SELECT * FROM revisions WHERE song_id = ? ORDER BY id DESC LIMIT 1')
 const qRevById = db.prepare('SELECT * FROM revisions WHERE id = ?')
 const qAddRev = db.prepare('INSERT INTO revisions (song_id, date, data, user_id) VALUES (?, ?, ?, ?)')
@@ -288,7 +325,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // /api/songs/:slug[/...]
-    const m = path.match(/^\/api\/songs\/([^/]+)(?:\/(content|revisions))?$/)
+    const m = path.match(/^\/api\/songs\/([^/]+)(?:\/(content|revisions|comments))?$/)
     if (m) {
       const row = qBySlug.get(decodeURIComponent(m[1])) as SongRow | undefined
       if (!row) return json(res, 404, { error: 'song not found' })
@@ -309,20 +346,54 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (req.method === 'GET' && m[2] === 'revisions') {
-        return json(res, 200, qRevisions.all(row.id))
+        const user = currentUser(req)
+        const revs = (qRevisions.all(row.id) as Record<string, unknown>[]).map((r) => ({
+          ...r,
+          myVote: user
+            ? ((qMyVote.get(r.id as number, user.id) as { vote: number } | undefined)?.vote ?? 0)
+            : 0,
+        }))
+        return json(res, 200, revs)
+      }
+
+      // 곡별 댓글
+      if (m[2] === 'comments') {
+        if (req.method === 'GET') {
+          const user = currentUser(req)
+          const comments = (qComments.all(row.id) as Record<string, unknown>[]).map((c) => ({
+            id: c.id,
+            text: c.text,
+            date: c.date,
+            author: c.author,
+            mine: user ? c.user_id === user.id : false,
+          }))
+          return json(res, 200, comments)
+        }
+        if (req.method === 'POST') {
+          const user = currentUser(req)
+          if (!user) return json(res, 401, { error: 'sign in required' })
+          const body = JSON.parse(await readBody(req)) as { text?: string }
+          const text = body.text?.trim()
+          if (!text || text.length > 2000) return json(res, 400, { error: 'text required (≤2000)' })
+          const date = new Date().toISOString()
+          const r = qAddComment.run(row.id, user.id, text, date)
+          return json(res, 201, { id: Number(r.lastInsertRowid), text, date, author: user.name, mine: true })
+        }
       }
 
       // 새 리비전 게시 (위키 모델: 로그인한 누구나)
       if (req.method === 'POST' && m[2] === 'revisions') {
         const user = currentUser(req)
         if (!user) return json(res, 401, { error: 'sign in required' })
-        const body = JSON.parse(await readBody(req)) as { b64?: string }
+        const body = JSON.parse(await readBody(req)) as { b64?: string; source?: string }
         if (!body.b64) return json(res, 400, { error: 'b64 required' })
         const data = Buffer.from(body.b64, 'base64')
         if (data.length > 5_000_000) return json(res, 413, { error: 'too large' })
+        const source = ['editor', 'upload', 'ai'].includes(body.source ?? '') ? body.source : 'editor'
         const date = new Date().toISOString()
         const r = qAddRev.run(row.id, date, data, user.id)
-        return json(res, 201, { id: Number(r.lastInsertRowid), date, author: user.name })
+        db.prepare('UPDATE revisions SET source = ? WHERE id = ?').run(source!, Number(r.lastInsertRowid))
+        return json(res, 201, { id: Number(r.lastInsertRowid), date, author: user.name, source })
       }
 
       // 원본으로 되돌리기 (리비전 전체 삭제, 로그인 필요)
@@ -331,6 +402,35 @@ const server = http.createServer(async (req, res) => {
         qClearRevs.run(row.id)
         return json(res, 200, { ok: true })
       }
+    }
+
+    // POST /api/revisions/:id/vote — 정확도 투표 (1 | -1 | 0=취소)
+    const mv = path.match(/^\/api\/revisions\/(\d+)\/vote$/)
+    if (mv && req.method === 'POST') {
+      const user = currentUser(req)
+      if (!user) return json(res, 401, { error: 'sign in required' })
+      const revId = Number(mv[1])
+      if (!qRevById.get(revId)) return json(res, 404, { error: 'revision not found' })
+      const body = JSON.parse(await readBody(req)) as { vote?: number }
+      const vote = body.vote === 1 ? 1 : body.vote === -1 ? -1 : 0
+      if (vote === 0) qDelVote.run(revId, user.id)
+      else qUpsertVote.run(revId, user.id, vote)
+      const score = (
+        db.prepare('SELECT COALESCE(SUM(vote), 0) AS s FROM revision_votes WHERE revision_id = ?').get(revId) as { s: number }
+      ).s
+      return json(res, 200, { score, myVote: vote })
+    }
+
+    // DELETE /api/comments/:id — 본인 댓글 삭제
+    const mc = path.match(/^\/api\/comments\/(\d+)$/)
+    if (mc && req.method === 'DELETE') {
+      const user = currentUser(req)
+      if (!user) return json(res, 401, { error: 'sign in required' })
+      const comment = qCommentById.get(Number(mc[1])) as { id: number; user_id: number } | undefined
+      if (!comment) return json(res, 404, { error: 'comment not found' })
+      if (comment.user_id !== user.id) return json(res, 403, { error: '본인 댓글만 삭제할 수 있습니다' })
+      qDelComment.run(comment.id)
+      return json(res, 200, { ok: true })
     }
 
     // GET /api/revisions/:id/content — 특정 리비전 열람

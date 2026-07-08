@@ -4,6 +4,7 @@ import * as alphaTab from '@coderline/alphatab'
 import {
   clearRevisions,
   fetchContent,
+  voteRevision,
   fetchRevisionContent,
   fetchRevisions,
   fetchSong,
@@ -16,6 +17,7 @@ import {
 import { toggleFavorite, useFavorites } from '../lib/favorites'
 import { setTheme, useTheme } from '../lib/theme'
 import { useUpload } from '../lib/uploadStore'
+import Comments from '../components/Comments'
 import Fretboard, { type ActiveNote } from '../components/Fretboard'
 import OpenFileButton from '../components/OpenFileButton'
 
@@ -561,6 +563,28 @@ export default function SongPage() {
     }
   }
 
+  const SOURCE_LABEL: Record<string, string> = {
+    editor: '수동 편집',
+    upload: '파일 업로드',
+    ai: 'AI 생성',
+  }
+
+  const vote = async (revId: number, next: 1 | -1 | 0) => {
+    try {
+      const r = await voteRevision(revId, next)
+      setRevList(
+        (prev) =>
+          prev?.map((rev) =>
+            rev.id === revId ? { ...rev, score: r.score, myVote: r.myVote } : rev,
+          ) ?? null,
+      )
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('401')) {
+        alert('투표하려면 로그인이 필요합니다.')
+      }
+    }
+  }
+
   const viewRevision = async (id: number) => {
     const api = apiRef.current
     if (!api) return
@@ -928,14 +952,32 @@ export default function SongPage() {
                     <span className="panel-title">리비전 목록</span>
                     {revList.length === 0 && <span className="rev-empty">저장된 리비전 없음</span>}
                     {revList.map((r) => (
-                      <button
-                        key={r.id}
-                        className={`rev-item ${revision?.id === r.id ? 'on' : ''}`}
-                        onClick={() => viewRevision(r.id)}
-                      >
-                        #{r.id} · {formatRevDate(r.date)}
-                        {r.author ? ` · ${r.author}` : ''}
-                      </button>
+                      <span key={r.id} className={`rev-item ${revision?.id === r.id ? 'on' : ''}`}>
+                        <button className="rev-item-main" onClick={() => viewRevision(r.id)}>
+                          #{r.id} · {formatRevDate(r.date)}
+                          {r.author ? ` · ${r.author}` : ''}
+                          <span className="rev-source">{SOURCE_LABEL[r.source ?? ''] ?? ''}</span>
+                        </button>
+                        <span className="rev-vote">
+                          <button
+                            className={`vote-btn ${r.myVote === 1 ? 'on' : ''}`}
+                            onClick={() => vote(r.id, r.myVote === 1 ? 0 : 1)}
+                            title="정확해요"
+                          >
+                            👍
+                          </button>
+                          <span className={`vote-score ${(r.score ?? 0) < 0 ? 'neg' : ''}`}>
+                            {r.score ?? 0}
+                          </span>
+                          <button
+                            className={`vote-btn ${r.myVote === -1 ? 'on' : ''}`}
+                            onClick={() => vote(r.id, r.myVote === -1 ? 0 : -1)}
+                            title="부정확해요"
+                          >
+                            👎
+                          </button>
+                        </span>
+                      </span>
                     ))}
                   </span>
                 )}
@@ -967,6 +1009,7 @@ export default function SongPage() {
         <div className="sheet-hint">
           악보를 드래그하면 구간이 선택되고, 루프(L)로 반복 연습할 수 있습니다.
         </div>
+        {song && <Comments slug={song.slug} />}
       </div>
 
       {panel === 'tracks' && (
