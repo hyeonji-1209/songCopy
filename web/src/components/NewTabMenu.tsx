@@ -114,7 +114,7 @@ export default function NewTabMenu() {
               />
             </label>
             <button className="auth-submit" type="submit" disabled={aiBusy || !aiTitle.trim()}>
-              {aiBusy ? '채보 중… (수십 초 걸려요)' : '악보 만들기'}
+              {aiBusy ? '채보 중… (악기 분리 포함, 몇 분 걸려요)' : '악보 만들기'}
             </button>
             <span className="panel-note">mp3/wav/m4a 등 — 앞 3분까지 분석. BPM 비우면 자동 감지.</span>
           </form>

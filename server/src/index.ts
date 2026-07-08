@@ -1,5 +1,5 @@
 import http from 'node:http'
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -203,41 +203,41 @@ interface NoteEvent {
 }
 
 const GUITAR_TUNING = [64, 59, 55, 50, 45, 40] // alphaTex string 1(高)~6(低)
+const BASS_TUNING = [43, 38, 33, 28] // g2 d2 a1 e1
 
-function notesToAlphaTex(notes: NoteEvent[], bpm: number, title: string, artist: string): string {
-  const grid = 30 / bpm // 8분음표(초)
-  const SLOTS_PER_BAR = 8
-  const MAX_BARS = 64
+const SLOTS_PER_BAR = 8
+const MAX_BARS = 64
+const DUR: Record<number, string> = { 1: ':8', 2: ':4', 4: ':2', 8: ':1' }
+const fitDur = (avail: number) => (avail >= 8 ? 8 : avail >= 4 ? 4 : avail >= 2 ? 2 : 1)
 
-  // 슬롯 양자화 + 같은 슬롯은 코드로 묶기
+/** 노트 이벤트 → 마디별 alphaTex 토큰 (튜닝에 맞춰 프렛 매핑, 이전 포지션 근접 우선) */
+function notesToBars(notes: NoteEvent[], bpm: number, tuning: number[]): string[] | null {
+  const grid = 30 / bpm
+  const lowest = tuning[tuning.length - 1]
+  const highest = tuning[0] + 20
   const bySlot = new Map<number, { midi: number; durSlots: number }[]>()
   for (const n of notes) {
     const slot = Math.round(n.start / grid)
     if (slot >= MAX_BARS * SLOTS_PER_BAR) continue
     const durSlots = Math.max(1, Math.min(8, Math.round((n.end - n.start) / grid)))
-    // 기타 음역(E2~C6)으로 옥타브 이동
     let midi = n.midi
-    while (midi < 40) midi += 12
-    while (midi > 84) midi -= 12
+    while (midi < lowest) midi += 12
+    while (midi > highest) midi -= 12
     if (!bySlot.has(slot)) bySlot.set(slot, [])
     bySlot.get(slot)!.push({ midi, durSlots })
   }
-  if (bySlot.size === 0) throw new Error('no notes detected')
+  if (bySlot.size === 0) return null
 
   const slots = [...bySlot.keys()].sort((a, b) => a - b)
-  const lastSlot = slots[slots.length - 1]
-  const totalBars = Math.min(MAX_BARS, Math.ceil((lastSlot + 1) / SLOTS_PER_BAR))
-  const DUR: Record<number, string> = { 1: ':8', 2: ':4', 4: ':2', 8: ':1' }
-  const fitDur = (avail: number) => (avail >= 8 ? 8 : avail >= 4 ? 4 : avail >= 2 ? 2 : 1)
+  const totalBars = Math.min(MAX_BARS, Math.ceil((slots[slots.length - 1] + 1) / SLOTS_PER_BAR))
 
-  // 피치 → (프렛.현): 이전 포지션과 가까운 낮은 프렛 우선
   let prevFret = 0
   const mapNote = (midi: number, used: Set<number>): string | null => {
     let best: { fret: number; string: number } | null = null
-    for (let s = 0; s < GUITAR_TUNING.length; s++) {
+    for (let s = 0; s < tuning.length; s++) {
       const stringNo = s + 1
       if (used.has(stringNo)) continue
-      const fret = midi - GUITAR_TUNING[s]
+      const fret = midi - tuning[s]
       if (fret < 0 || fret > 20) continue
       if (!best || Math.abs(fret - prevFret) + fret * 0.3 < Math.abs(best.fret - prevFret) + best.fret * 0.3) {
         best = { fret, string: stringNo }
@@ -259,8 +259,7 @@ function notesToAlphaTex(notes: NoteEvent[], bpm: number, title: string, artist:
       const nextEventSlot = slots.find((s) => s > cursor) ?? Infinity
       if (events && events.length > 0) {
         const wanted = Math.max(...events.map((e) => e.durSlots))
-        const avail = Math.min(wanted, nextEventSlot - cursor, barEnd - cursor)
-        const dur = fitDur(avail)
+        const dur = fitDur(Math.min(wanted, nextEventSlot - cursor, barEnd - cursor))
         const used = new Set<number>()
         const mapped = events.map((e) => mapNote(e.midi, used)).filter(Boolean) as string[]
         if (mapped.length === 0) tokens.push(`${DUR[dur]} r`)
@@ -268,23 +267,87 @@ function notesToAlphaTex(notes: NoteEvent[], bpm: number, title: string, artist:
         else tokens.push(`${DUR[dur]} (${mapped.join(' ')})`)
         cursor += dur
       } else {
-        const restUntil = Math.min(nextEventSlot, barEnd)
-        const dur = fitDur(restUntil - cursor)
+        const dur = fitDur(Math.min(nextEventSlot, barEnd) - cursor)
         tokens.push(`${DUR[dur]} r`)
         cursor += dur
       }
     }
     bars.push(tokens.join(' '))
   }
+  return bars
+}
+
+interface DrumEvent {
+  time: number
+  kind: 'kick' | 'snare' | 'hat'
+}
+
+/** 드럼 온셋 → 8분음표 그리드 퍼커션 토큰 */
+function drumsToBars(events: DrumEvent[], bpm: number): string[] | null {
+  const grid = 30 / bpm
+  const ART: Record<DrumEvent['kind'], string> = {
+    kick: 'KickHit',
+    snare: 'SnareHit',
+    hat: 'HiHatClosed',
+  }
+  const bySlot = new Map<number, Set<string>>()
+  let lastSlot = 0
+  for (const e of events) {
+    const slot = Math.round(e.time / grid)
+    if (slot >= MAX_BARS * SLOTS_PER_BAR) continue
+    if (!bySlot.has(slot)) bySlot.set(slot, new Set())
+    bySlot.get(slot)!.add(ART[e.kind])
+    lastSlot = Math.max(lastSlot, slot)
+  }
+  if (bySlot.size < 4) return null
+  const totalBars = Math.min(MAX_BARS, Math.ceil((lastSlot + 1) / SLOTS_PER_BAR))
+  const bars: string[] = []
+  for (let bar = 0; bar < totalBars; bar++) {
+    const tokens: string[] = []
+    for (let s = bar * SLOTS_PER_BAR; s < (bar + 1) * SLOTS_PER_BAR; s++) {
+      const hits = bySlot.get(s)
+      if (!hits || hits.size === 0) tokens.push(':8 r')
+      else if (hits.size === 1) tokens.push(`:8 ${[...hits][0]}`)
+      else tokens.push(`:8 (${[...hits].join(' ')})`)
+    }
+    bars.push(tokens.join(' '))
+  }
+  return bars
+}
+
+interface TranscribeTracks {
+  vocals?: NoteEvent[]
+  other?: NoteEvent[]
+  bass?: NoteEvent[]
+  drums?: DrumEvent[]
+}
+
+function tracksToAlphaTex(tracks: TranscribeTracks, bpm: number, title: string, artist: string): string {
+  const parts: string[] = []
+  const melody = tracks.vocals && tracks.vocals.length >= 3 ? notesToBars(tracks.vocals, bpm, GUITAR_TUNING) : null
+  if (melody) {
+    parts.push(`\\track "멜로디 (보컬)"\n\\staff {score tabs}\n${melody.join(' |\n')}`)
+  }
+  const other = tracks.other && tracks.other.length >= 3 ? notesToBars(tracks.other, bpm, GUITAR_TUNING) : null
+  if (other) {
+    parts.push(`\\track "기타/코드"\n\\staff {score tabs}\n\\instrument 25\n${other.join(' |\n')}`)
+  }
+  const bass = tracks.bass && tracks.bass.length >= 3 ? notesToBars(tracks.bass, bpm, BASS_TUNING) : null
+  if (bass) {
+    parts.push(`\\track "베이스"\n\\staff {tabs}\n\\instrument 33\n\\tuning g2 d2 a1 e1\n${bass.join(' |\n')}`)
+  }
+  const drums = tracks.drums ? drumsToBars(tracks.drums, bpm) : null
+  if (drums) {
+    parts.push(`\\track "드럼"\n\\instrument percussion\n\\articulation defaults\n${drums.join(' |\n')}`)
+  }
+  if (parts.length === 0) throw new Error('no notes detected')
 
   const esc = (s: string) => s.replace(/"/g, '\\"')
   return `\\title "${esc(title)}"
 \\subtitle "${esc(artist)}"
 \\tempo ${bpm}
 .
-\\track "기타 (AI 채보)"
-\\staff {score tabs}
-${bars.join(' |\n')}`
+${parts.join('\n')}`
 }
 
 function json(
@@ -436,32 +499,62 @@ const server = http.createServer(async (req, res) => {
       writeFileSync(tmp, audio)
       try {
         const script = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'transcribe.py')
-        const proc = spawnSync('python3', [script, tmp], {
-          timeout: 300_000,
-          maxBuffer: 64 * 1024 * 1024,
-          encoding: 'utf-8',
-        })
+        // 비동기 spawn: 채보(수 분)가 도는 동안에도 서버가 다른 요청을 처리할 수 있어야 한다
+        const proc = await new Promise<{ status: number | null; stdout: string; stderr: string }>(
+          (resolve) => {
+            const p = spawn('python3', [script, tmp])
+            let stdout = ''
+            let stderr = ''
+            p.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
+            p.stderr.on('data', (d: Buffer) => (stderr += d.toString()))
+            const timer = setTimeout(() => p.kill('SIGKILL'), 600_000)
+            p.on('close', (code) => {
+              clearTimeout(timer)
+              resolve({ status: code, stdout, stderr })
+            })
+            p.on('error', () => {
+              clearTimeout(timer)
+              resolve({ status: -1, stdout, stderr: stderr || 'spawn failed' })
+            })
+          },
+        )
         if (proc.status !== 0) {
           console.error('transcribe failed:', proc.stderr?.slice(0, 500))
-          return json(res, 500, { error: 'AI 채보 실행 실패 (basic-pitch 설치 확인)' })
+          return json(res, 500, { error: 'AI 채보 실행 실패 (basic-pitch/demucs 설치 확인)' })
         }
         const result = JSON.parse(proc.stdout) as {
-          notes?: NoteEvent[]
+          tracks?: TranscribeTracks
           bpm?: number | null
           error?: string
         }
-        if (result.error || !result.notes?.length) {
+        const tracks = result.tracks ?? {}
+        const totalNotes =
+          (tracks.vocals?.length ?? 0) + (tracks.other?.length ?? 0) + (tracks.bass?.length ?? 0)
+        if (result.error || (totalNotes === 0 && !(tracks.drums?.length ?? 0))) {
           return json(res, 422, { error: '오디오에서 노트를 감지하지 못했습니다' })
         }
         // BPM: 사용자 입력 > 자동 감지 > 120
         const rawBpm = body.bpm && body.bpm > 0 ? body.bpm : (result.bpm ?? 120)
         const bpm = Math.min(220, Math.max(40, Math.round(rawBpm)))
         const artist = body.artist?.trim() || 'AI 채보'
-        const tex = notesToAlphaTex(result.notes, bpm, title, artist)
+        const tex = tracksToAlphaTex(tracks, bpm, title, artist)
+        const instruments = [
+          ...(tracks.vocals?.length ? ['보컬'] : []),
+          ...(tracks.other?.length ? ['기타'] : []),
+          ...(tracks.bass?.length ? ['베이스'] : []),
+          ...(tracks.drums?.length ? ['드럼'] : []),
+        ]
         const slug = uniqueSlug(title, artist)
-        insertSong.run(slug, title, artist, JSON.stringify(['기타']), new Date().toISOString(), tex)
+        insertSong.run(
+          slug,
+          title,
+          artist,
+          JSON.stringify(instruments.length ? instruments : ['기타']),
+          new Date().toISOString(),
+          tex,
+        )
         db.prepare('UPDATE songs SET source = ? WHERE slug = ?').run('ai', slug)
-        return json(res, 201, { slug, noteCount: result.notes.length, bpm })
+        return json(res, 201, { slug, noteCount: totalNotes, bpm })
       } finally {
         try {
           unlinkSync(tmp)
