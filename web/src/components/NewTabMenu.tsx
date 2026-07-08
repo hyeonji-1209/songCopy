@@ -9,7 +9,7 @@ export default function NewTabMenu() {
   const [artist, setArtist] = useState('')
   const [busy, setBusy] = useState(false)
   const [aiTitle, setAiTitle] = useState('')
-  const [aiBpm, setAiBpm] = useState(120)
+  const [aiBpm, setAiBpm] = useState('') // 비우면 자동 감지
   const [aiBusy, setAiBusy] = useState(false)
   const audioRef = useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
@@ -22,7 +22,8 @@ export default function NewTabMenu() {
     try {
       const data = new Uint8Array(await file.arrayBuffer())
       const ext = file.name.split('.').pop()?.toLowerCase() ?? 'wav'
-      const { slug } = await postTranscribe(aiTitle.trim(), aiBpm, data, ext)
+      const bpm = aiBpm.trim() ? Number(aiBpm) : null
+      const { slug } = await postTranscribe(aiTitle.trim(), bpm, data, ext)
       setOpen(false)
       setAiTitle('')
       navigate(`/tab/${slug}`)
@@ -102,8 +103,9 @@ export default function NewTabMenu() {
                 type="number"
                 min={40}
                 max={220}
+                placeholder="자동 감지"
                 value={aiBpm}
-                onChange={(e) => setAiBpm(Number(e.target.value))}
+                onChange={(e) => setAiBpm(e.target.value)}
               />
             </label>
             <button className="auth-submit" type="submit" disabled={aiBusy || !aiTitle.trim()}>

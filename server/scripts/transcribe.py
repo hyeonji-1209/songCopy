@@ -23,12 +23,30 @@ def main() -> None:
 
         _, _, note_events = predict(sys.argv[1])
 
+        # BPM 자동 감지 (librosa 비트 트래킹)
+        bpm = None
+        try:
+            import librosa
+
+            y, sr = librosa.load(sys.argv[1], mono=True)
+            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+            t = float(tempo if not hasattr(tempo, "__len__") else tempo[0])
+            # 절반/두 배 모호성 보정: 70~180 범위로 정규화
+            while t > 0 and t < 70:
+                t *= 2
+            while t > 180:
+                t /= 2
+            if t > 0:
+                bpm = round(t)
+        except Exception:
+            bpm = None
+
     notes = [
         {"start": round(float(s), 4), "end": round(float(e), 4), "midi": int(p), "amp": round(float(a), 3)}
         for s, e, p, a, _bends in sorted(note_events)
         if a >= 0.3  # 저신뢰 노트 제거
     ]
-    print(json.dumps({"notes": notes}))
+    print(json.dumps({"notes": notes, "bpm": bpm}))
 
 
 if __name__ == "__main__":

@@ -430,7 +430,6 @@ const server = http.createServer(async (req, res) => {
       if (!title || !body.b64) return json(res, 400, { error: '제목과 오디오 파일이 필요합니다' })
       const audio = Buffer.from(body.b64, 'base64')
       if (audio.length > 15_000_000) return json(res, 413, { error: '오디오는 15MB 이하만 가능합니다' })
-      const bpm = Math.min(220, Math.max(40, Math.round(body.bpm ?? 120)))
       const ext = /^[a-z0-9]{1,5}$/.test(body.ext ?? '') ? body.ext : 'wav'
 
       const tmp = join(DATA_DIR, `transcribe-${randomUUID()}.${ext}`)
@@ -446,16 +445,23 @@ const server = http.createServer(async (req, res) => {
           console.error('transcribe failed:', proc.stderr?.slice(0, 500))
           return json(res, 500, { error: 'AI 채보 실행 실패 (basic-pitch 설치 확인)' })
         }
-        const result = JSON.parse(proc.stdout) as { notes?: NoteEvent[]; error?: string }
+        const result = JSON.parse(proc.stdout) as {
+          notes?: NoteEvent[]
+          bpm?: number | null
+          error?: string
+        }
         if (result.error || !result.notes?.length) {
           return json(res, 422, { error: '오디오에서 노트를 감지하지 못했습니다' })
         }
+        // BPM: 사용자 입력 > 자동 감지 > 120
+        const rawBpm = body.bpm && body.bpm > 0 ? body.bpm : (result.bpm ?? 120)
+        const bpm = Math.min(220, Math.max(40, Math.round(rawBpm)))
         const artist = body.artist?.trim() || 'AI 채보'
         const tex = notesToAlphaTex(result.notes, bpm, title, artist)
         const slug = uniqueSlug(title, artist)
         insertSong.run(slug, title, artist, JSON.stringify(['기타']), new Date().toISOString(), tex)
         db.prepare('UPDATE songs SET source = ? WHERE slug = ?').run('ai', slug)
-        return json(res, 201, { slug, noteCount: result.notes.length })
+        return json(res, 201, { slug, noteCount: result.notes.length, bpm })
       } finally {
         try {
           unlinkSync(tmp)
