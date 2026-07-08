@@ -1030,6 +1030,12 @@ export default function SongPage() {
         <div className="sheet-hint">
           악보를 드래그하면 구간이 선택되고, 루프(L)로 반복 연습할 수 있습니다.
         </div>
+        {song?.lyrics && (
+          <details className="lyrics" open>
+            <summary>🎤 가사 (AI 추출)</summary>
+            <pre>{song.lyrics}</pre>
+          </details>
+        )}
         {song && <Comments slug={song.slug} />}
       </div>
 

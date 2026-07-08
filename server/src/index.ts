@@ -62,6 +62,11 @@ try {
 } catch {
   /* 이미 있음 */
 }
+try {
+  db.exec('ALTER TABLE songs ADD COLUMN lyrics TEXT')
+} catch {
+  /* 이미 있음 */
+}
 db.exec(`
   CREATE TABLE IF NOT EXISTS revision_votes (
     revision_id INTEGER NOT NULL REFERENCES revisions(id),
@@ -179,6 +184,7 @@ function songMeta(row: SongRow) {
     instruments: JSON.parse(row.instruments) as string[],
     seedDate: row.seed_date,
     source: row.source ?? null,
+    lyrics: (row as { lyrics?: string | null }).lyrics ?? null,
     latestRevision: revs[0] ?? null,
     revisionCount: revs.length,
   }
@@ -210,11 +216,15 @@ const MAX_BARS = 64
 const DUR: Record<number, string> = { 1: ':8', 2: ':4', 4: ':2', 8: ':1' }
 const fitDur = (avail: number) => (avail >= 8 ? 8 : avail >= 4 ? 4 : avail >= 2 ? 2 : 1)
 
-/** 노트 이벤트 → 마디별 alphaTex 토큰 (튜닝에 맞춰 프렛 매핑, 이전 포지션 근접 우선) */
-function notesToBars(notes: NoteEvent[], bpm: number, tuning: number[]): string[] | null {
+const PITCH_NAMES = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b']
+const pitchName = (midi: number) => `${PITCH_NAMES[midi % 12]}${Math.floor(midi / 12) - 1}`
+
+/** 노트 이벤트 → 마디별 alphaTex 토큰.
+ * tuning 지정 시 프렛 매핑(탭), null이면 음이름(피아노/신스 등 오선보 전용) */
+function notesToBars(notes: NoteEvent[], bpm: number, tuning: number[] | null): string[] | null {
   const grid = 30 / bpm
-  const lowest = tuning[tuning.length - 1]
-  const highest = tuning[0] + 20
+  const lowest = tuning ? tuning[tuning.length - 1] : 36
+  const highest = tuning ? tuning[0] + 20 : 96
   const bySlot = new Map<number, { midi: number; durSlots: number }[]>()
   for (const n of notes) {
     const slot = Math.round(n.start / grid)
@@ -233,6 +243,11 @@ function notesToBars(notes: NoteEvent[], bpm: number, tuning: number[]): string[
 
   let prevFret = 0
   const mapNote = (midi: number, used: Set<number>): string | null => {
+    if (!tuning) {
+      if (used.has(midi)) return null // 코드 내 중복 음 제거
+      used.add(midi)
+      return pitchName(midi)
+    }
     let best: { fret: number; string: number } | null = null
     for (let s = 0; s < tuning.length; s++) {
       const stringNo = s + 1
@@ -317,25 +332,32 @@ function drumsToBars(events: DrumEvent[], bpm: number): string[] | null {
 
 interface TranscribeTracks {
   vocals?: NoteEvent[]
+  guitar?: NoteEvent[]
+  piano?: NoteEvent[]
   other?: NoteEvent[]
   bass?: NoteEvent[]
   drums?: DrumEvent[]
 }
 
+// 감지된 악기만 트랙으로 생성 (6스템: vocals/guitar/piano/other/bass/drums)
 function tracksToAlphaTex(tracks: TranscribeTracks, bpm: number, title: string, artist: string): string {
   const parts: string[] = []
-  const melody = tracks.vocals && tracks.vocals.length >= 3 ? notesToBars(tracks.vocals, bpm, GUITAR_TUNING) : null
-  if (melody) {
-    parts.push(`\\track "멜로디 (보컬)"\n\\staff {score tabs}\n${melody.join(' |\n')}`)
+  const add = (
+    notes: NoteEvent[] | undefined,
+    build: (bars: string[]) => string,
+    tuning: number[] | null,
+  ) => {
+    if (!notes || notes.length < 8) return
+    const bars = notesToBars(notes, bpm, tuning)
+    if (bars) parts.push(build(bars))
   }
-  const other = tracks.other && tracks.other.length >= 3 ? notesToBars(tracks.other, bpm, GUITAR_TUNING) : null
-  if (other) {
-    parts.push(`\\track "기타/코드"\n\\staff {score tabs}\n\\instrument 25\n${other.join(' |\n')}`)
-  }
-  const bass = tracks.bass && tracks.bass.length >= 3 ? notesToBars(tracks.bass, bpm, BASS_TUNING) : null
-  if (bass) {
-    parts.push(`\\track "베이스"\n\\staff {tabs}\n\\instrument 33\n\\tuning g2 d2 a1 e1\n${bass.join(' |\n')}`)
-  }
+
+  add(tracks.vocals, (b) => `\\track "멜로디 (보컬)"\n\\staff {score tabs}\n${b.join(' |\n')}`, GUITAR_TUNING)
+  add(tracks.guitar, (b) => `\\track "기타"\n\\staff {score tabs}\n\\instrument 25\n${b.join(' |\n')}`, GUITAR_TUNING)
+  add(tracks.piano, (b) => `\\track "키보드 (피아노)"\n\\staff {score}\n\\instrument 0\n${b.join(' |\n')}`, null)
+  add(tracks.other, (b) => `\\track "신스/기타 악기"\n\\staff {score}\n\\instrument 81\n${b.join(' |\n')}`, null)
+  add(tracks.bass, (b) => `\\track "베이스"\n\\staff {tabs}\n\\instrument 33\n\\tuning g2 d2 a1 e1\n${b.join(' |\n')}`, BASS_TUNING)
+
   const drums = tracks.drums ? drumsToBars(tracks.drums, bpm) : null
   if (drums) {
     parts.push(`\\track "드럼"\n\\instrument percussion\n\\articulation defaults\n${drums.join(' |\n')}`)
@@ -525,11 +547,16 @@ const server = http.createServer(async (req, res) => {
         const result = JSON.parse(proc.stdout) as {
           tracks?: TranscribeTracks
           bpm?: number | null
+          lyrics?: string
           error?: string
         }
         const tracks = result.tracks ?? {}
         const totalNotes =
-          (tracks.vocals?.length ?? 0) + (tracks.other?.length ?? 0) + (tracks.bass?.length ?? 0)
+          (tracks.vocals?.length ?? 0) +
+          (tracks.guitar?.length ?? 0) +
+          (tracks.piano?.length ?? 0) +
+          (tracks.other?.length ?? 0) +
+          (tracks.bass?.length ?? 0)
         if (result.error || (totalNotes === 0 && !(tracks.drums?.length ?? 0))) {
           return json(res, 422, { error: '오디오에서 노트를 감지하지 못했습니다' })
         }
@@ -540,7 +567,9 @@ const server = http.createServer(async (req, res) => {
         const tex = tracksToAlphaTex(tracks, bpm, title, artist)
         const instruments = [
           ...(tracks.vocals?.length ? ['보컬'] : []),
-          ...(tracks.other?.length ? ['기타'] : []),
+          ...(tracks.guitar?.length ? ['기타'] : []),
+          ...(tracks.piano?.length ? ['키보드'] : []),
+          ...(tracks.other?.length ? ['신스'] : []),
           ...(tracks.bass?.length ? ['베이스'] : []),
           ...(tracks.drums?.length ? ['드럼'] : []),
         ]
@@ -553,8 +582,12 @@ const server = http.createServer(async (req, res) => {
           new Date().toISOString(),
           tex,
         )
-        db.prepare('UPDATE songs SET source = ? WHERE slug = ?').run('ai', slug)
-        return json(res, 201, { slug, noteCount: totalNotes, bpm })
+        db.prepare('UPDATE songs SET source = ?, lyrics = ? WHERE slug = ?').run(
+          'ai',
+          result.lyrics?.trim() || null,
+          slug,
+        )
+        return json(res, 201, { slug, noteCount: totalNotes, bpm, hasLyrics: !!result.lyrics?.trim() })
       } finally {
         try {
           unlinkSync(tmp)

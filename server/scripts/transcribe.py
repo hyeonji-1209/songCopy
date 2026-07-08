@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""오디오 파일 → 멀티트랙 노트 이벤트 JSON.
+"""오디오 파일 → 악기 감지 + 멀티트랙 노트 이벤트 + 가사 JSON.
 
-파이프라인: demucs(4스템 분리) → basic-pitch(보컬/기타/베이스 채보)
-           + 드럼 스템 온셋 검출·분류(킥/스네어/햇) + librosa BPM 감지
+파이프라인:
+  demucs htdemucs_6s (6스템: vocals/guitar/piano/bass/other/drums)
+  → 스템별 존재 여부 판단(에너지·노트 수) → 있는 악기만 basic-pitch 채보
+  → 드럼: 온셋 검출 + 킥/스네어/햇 분류
+  → 보컬 있으면 Whisper로 가사(타임스탬프) 추출
+  → librosa BPM 감지
 
-사용: python3 transcribe.py <audio-file>
-출력(stdout): {"bpm": n|null, "tracks": {"vocals": [...], "other": [...], "bass": [...],
-               "drums": [{"time": s, "kind": "kick"|"snare"|"hat"}]}}
-노트: {"start": s, "end": s, "midi": n, "amp": a}
+출력(stdout): {"bpm": n|null, "lyrics": "...",
+  "tracks": {"vocals":[], "guitar":[], "piano":[], "other":[], "bass":[], "drums":[]}}
 """
 import contextlib
 import glob
@@ -18,6 +20,8 @@ import shutil
 import sys
 import tempfile
 
+MELODIC_STEMS = ("vocals", "guitar", "piano", "other", "bass")
+
 
 def notes_from(events, min_amp=0.3):
     return [
@@ -27,8 +31,19 @@ def notes_from(events, min_amp=0.3):
     ]
 
 
+def stem_has_content(path):
+    """스템에 실제 소리가 있는지 (RMS 에너지 기준)"""
+    import numpy as np
+    import librosa
+
+    y, _sr = librosa.load(path, mono=True, duration=120)
+    if len(y) == 0:
+        return False
+    rms = float(np.sqrt(np.mean(y**2)))
+    return rms > 0.004
+
+
 def classify_drums(path):
-    """드럼 스템에서 온셋 검출 후 스펙트럼 대역으로 킥/스네어/햇 분류."""
     import librosa
     import numpy as np
 
@@ -58,6 +73,29 @@ def classify_drums(path):
     return events
 
 
+def extract_lyrics(vocals_path):
+    """보컬 스템 → Whisper 가사 (타임스탬프 라인). librosa로 로드해 ffmpeg 의존 제거."""
+    try:
+        import librosa
+        import whisper
+
+        y, _sr = librosa.load(vocals_path, sr=16000, mono=True)
+        if len(y) < 16000:
+            return ""
+        model = whisper.load_model("base")
+        result = model.transcribe(y, fp16=False)
+        lines = []
+        for seg in result.get("segments", []):
+            text = seg.get("text", "").strip()
+            if not text:
+                continue
+            t = int(seg["start"])
+            lines.append(f"[{t // 60}:{t % 60:02d}] {text}")
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
 def main() -> None:
     if len(sys.argv) < 2 or not os.path.exists(sys.argv[1]):
         print(json.dumps({"error": "audio file required"}))
@@ -65,11 +103,10 @@ def main() -> None:
     audio = sys.argv[1]
 
     buf = io.StringIO()
-    out = {"bpm": None, "tracks": {"vocals": [], "other": [], "bass": [], "drums": []}}
+    out = {"bpm": None, "lyrics": "", "tracks": {k: [] for k in (*MELODIC_STEMS, "drums")}}
     tmpdir = tempfile.mkdtemp(prefix="songcopy-sep-")
     try:
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-            # BPM (원본 믹스 기준)
             try:
                 import librosa
 
@@ -87,30 +124,37 @@ def main() -> None:
 
             from basic_pitch.inference import predict
 
-            # 스템 분리 (실패 시 전체를 'other'로 단일 채보)
             stems = {}
             try:
                 from demucs.separate import main as demucs_main
 
-                demucs_main(["-n", "htdemucs", "-o", tmpdir, audio])
-                for f in glob.glob(os.path.join(tmpdir, "htdemucs", "*", "*.wav")):
+                demucs_main(["-n", "htdemucs_6s", "-o", tmpdir, audio])
+                for f in glob.glob(os.path.join(tmpdir, "htdemucs_6s", "*", "*.wav")):
                     stems[os.path.splitext(os.path.basename(f))[0]] = f
             except Exception:
                 stems = {}
 
             if stems:
-                for name in ("vocals", "other", "bass"):
-                    if name in stems:
-                        try:
-                            _, _, ev = predict(stems[name])
-                            out["tracks"][name] = notes_from(ev, 0.35 if name != "bass" else 0.3)
-                        except Exception:
-                            pass
-                if "drums" in stems:
+                for name in MELODIC_STEMS:
+                    path = stems.get(name)
+                    if not path or not stem_has_content(path):
+                        continue
                     try:
-                        out["tracks"]["drums"] = classify_drums(stems["drums"])
+                        _, _, ev = predict(path)
+                        notes = notes_from(ev, 0.35 if name != "bass" else 0.3)
+                        if len(notes) >= 8:  # 존재 판단: 유의미한 노트 수
+                            out["tracks"][name] = notes
                     except Exception:
                         pass
+                if "drums" in stems and stem_has_content(stems["drums"]):
+                    try:
+                        drums = classify_drums(stems["drums"])
+                        if len(drums) >= 8:
+                            out["tracks"]["drums"] = drums
+                    except Exception:
+                        pass
+                if out["tracks"]["vocals"]:
+                    out["lyrics"] = extract_lyrics(stems["vocals"])
             else:
                 _, _, ev = predict(audio)
                 out["tracks"]["other"] = notes_from(ev)

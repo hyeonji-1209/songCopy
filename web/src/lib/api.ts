@@ -22,6 +22,7 @@ export interface SongMeta {
   instruments: string[]
   seedDate: string
   source?: string | null
+  lyrics?: string | null
   latestRevision: RevisionInfo | null
   revisionCount: number
 }
