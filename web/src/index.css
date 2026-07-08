@@ -1028,3 +1028,55 @@ kbd {
   gap: 6px;
   margin-top: 16px;
 }
+
+/* ── 새 타브 메뉴 ───────────────────────────── */
+.newtab-anchor {
+  position: relative;
+}
+
+.newtab-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: -40px;
+  background: var(--bar-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.16);
+  padding: 16px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 260px;
+}
+
+.newtab-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.newtab-form input {
+  padding: 8px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.newtab-form input:focus {
+  outline: none;
+  border-color: var(--green);
+}
+
+.newtab-divider {
+  text-align: center;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.newtab-upload {
+  padding: 10px;
+  font-size: 12px;
+}

@@ -5,7 +5,7 @@ import MyTabs from './pages/MyTabs'
 import SongPage from './pages/SongPage'
 import AuthModal from './components/AuthModal'
 import HelpModal from './components/HelpModal'
-import OpenFileButton from './components/OpenFileButton'
+import NewTabMenu from './components/NewTabMenu'
 import { signout, useUser } from './lib/auth'
 import { syncFavoritesWithServer } from './lib/favorites'
 import { useTheme } from './lib/theme'
@@ -33,9 +33,7 @@ export default function App() {
           <Link to="/mytabs" className="nav-item">
             <span className="nav-icon">☆</span>내 타브
           </Link>
-          <OpenFileButton className="nav-item nav-button">
-            <span className="nav-icon">📄</span>새 타브
-          </OpenFileButton>
+          <NewTabMenu />
           <button className="nav-item nav-button" onClick={() => setShowHelp(true)}>
             <span className="nav-icon">❔</span>도움말
           </button>

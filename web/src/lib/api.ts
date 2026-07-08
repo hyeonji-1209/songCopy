@@ -59,6 +59,13 @@ export const postRevision = (slug: string, data: Uint8Array) =>
     body: JSON.stringify({ b64: toBase64(data) }),
   })
 
+export const createSong = (title: string, artist: string) =>
+  req<{ slug: string }>('/api/songs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, artist }),
+  })
+
 export const clearRevisions = (slug: string) =>
   req<{ ok: boolean }>(`/api/songs/${slug}/revisions`, { method: 'DELETE' })
 

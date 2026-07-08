@@ -71,6 +71,7 @@ export default function SongPage() {
   const [panel, setPanel] = useState<'speed' | 'tracks' | 'pitch' | 'more' | 'sync' | null>(null)
   const [fourBars, setFourBars] = useState(false)
   const [dynamics, setDynamics] = useState(true)
+  const [notationMode, setNotationMode] = useState<'both' | 'tab' | 'score'>('both')
   const [position, setPosition] = useState({ current: 0, end: 0 })
   const [scoreMeta, setScoreMeta] = useState({ title: '', artist: '' })
   const [showFretboard, setShowFretboard] = useState(false)
@@ -640,6 +641,53 @@ export default function SongPage() {
     })
   }
 
+  const changeNotationMode = (mode: 'both' | 'tab' | 'score') => {
+    const api = apiRef.current
+    if (!api) return
+    setNotationMode(mode)
+    api.settings.display.staveProfile =
+      mode === 'tab'
+        ? alphaTab.StaveProfile.Tab
+        : mode === 'score'
+          ? alphaTab.StaveProfile.Score
+          : alphaTab.StaveProfile.Default
+    api.updateSettings()
+    api.render()
+  }
+
+  // Shift+←/→: 루프 오른쪽 경계를 마디 단위로 이동 (Songsterr 동일)
+  const adjustLoopEnd = (dir: 1 | -1) => {
+    const api = apiRef.current
+    if (!api?.score) return
+    const mbs = api.score.masterBars
+    const last = mbs[mbs.length - 1]
+    const boundaries = mbs.map((mb) => mb.start)
+    boundaries.push(last.start + last.calculateDuration())
+
+    const range = api.playbackRange
+    let startTick: number
+    let endIdx: number
+    if (range) {
+      startTick = range.startTick
+      endIdx = boundaries.findIndex((b) => b >= range.endTick)
+      if (endIdx < 0) endIdx = boundaries.length - 1
+    } else {
+      // 루프가 없으면 현재 커서 마디부터 시작
+      const tick = api.tickPosition
+      let barIdx = mbs.findIndex((mb) => mb.start > tick) - 1
+      if (barIdx < 0) barIdx = barIdx === -2 ? mbs.length - 1 : 0
+      startTick = boundaries[barIdx]
+      endIdx = barIdx + 1
+    }
+    const startIdx = boundaries.findIndex((b) => b >= startTick)
+    endIdx = Math.min(boundaries.length - 1, Math.max(startIdx + 1, endIdx + dir))
+    api.playbackRange = { startTick, endTick: boundaries[endIdx] }
+    if (!loop) {
+      api.isLooping = true
+      setLoop(true)
+    }
+  }
+
   const toggleDynamics = () => {
     const api = apiRef.current
     if (!api) return
@@ -720,6 +768,12 @@ export default function SongPage() {
         changeSpeed(speed + (e.code === 'KeyD' ? 1 : -1))
         return
       }
+      // Shift+←/→: 루프 경계 이동
+      if (e.shiftKey && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+        e.preventDefault()
+        adjustLoopEnd(e.key === 'ArrowRight' ? 1 : -1)
+        return
+      }
 
       // 편집 모드 전용 키
       if (editMode && selRef.current) {
@@ -797,7 +851,7 @@ export default function SongPage() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTrack, isOriginal, editMode, speed])
+  }, [activeTrack, isOriginal, editMode, speed, loop])
 
   if (songError) {
     return (
@@ -1053,6 +1107,26 @@ export default function SongPage() {
             />
             다크 모드
           </label>
+          <div className="panel-title" style={{ marginTop: 12 }}>
+            표기 모드
+          </div>
+          <div className="speed-presets">
+            {(
+              [
+                ['both', '탭+오선보'],
+                ['tab', '탭만'],
+                ['score', '오선보만'],
+              ] as const
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                className={`chip ${notationMode === mode ? 'on' : ''}`}
+                onClick={() => changeNotationMode(mode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="panel-title" style={{ marginTop: 12 }}>
             마스터 볼륨: {masterVolume}%
           </div>

@@ -242,6 +242,35 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // POST /api/songs — 빈 탭 생성 (로그인 필요)
+    if (req.method === 'POST' && path === '/api/songs') {
+      const user = currentUser(req)
+      if (!user) return json(res, 401, { error: 'sign in required' })
+      const body = JSON.parse(await readBody(req)) as { title?: string; artist?: string }
+      const title = body.title?.trim()
+      const artist = body.artist?.trim() || 'Unknown'
+      if (!title) return json(res, 400, { error: '제목이 필요합니다' })
+
+      const base =
+        `${artist}-${title}`
+          .toLowerCase()
+          .replace(/[^a-z0-9가-힣]+/g, '-')
+          .replace(/^-+|-+$/g, '') || 'song'
+      let slug = base
+      for (let n = 2; qBySlug.get(slug); n++) slug = `${base}-${n}`
+
+      const esc = (s: string) => s.replace(/"/g, '\\"')
+      const tex = `\\title "${esc(title)}"
+\\subtitle "${esc(artist)}"
+\\tempo 120
+.
+\\track "기타"
+\\staff {score tabs}
+:1 r | r | r | r | r | r | r | r`
+      insertSong.run(slug, title, artist, JSON.stringify(['기타']), new Date().toISOString(), tex)
+      return json(res, 201, { slug })
+    }
+
     // GET /api/songs?pattern=
     if (req.method === 'GET' && path === '/api/songs') {
       const pattern = (url.searchParams.get('pattern') ?? '').trim().toLowerCase()
@@ -258,7 +287,7 @@ const server = http.createServer(async (req, res) => {
     // /api/songs/:slug[/...]
     const m = path.match(/^\/api\/songs\/([^/]+)(?:\/(content|revisions))?$/)
     if (m) {
-      const row = qBySlug.get(m[1]) as SongRow | undefined
+      const row = qBySlug.get(decodeURIComponent(m[1])) as SongRow | undefined
       if (!row) return json(res, 404, { error: 'song not found' })
 
       if (req.method === 'GET' && !m[2]) return json(res, 200, songMeta(row))
