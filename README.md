@@ -73,6 +73,7 @@ docker run -p 3001:3001 -v songcopy-data:/app/server/data songcopy
 
 ## 문서
 
+- **[기능 총람](docs/FEATURES.md) — songCopy의 모든 기능 한 문서 정리 (단축키·믹서·에디터·리비전·계정 등)**
 - [Songsterr 서비스 분석](docs/songsterr-analysis.md) — 기능·요금제·단축키·곡 페이지 UI 개요
 - [웹 플레이어 심층 분석](docs/songsterr-player.md) — 프로덕션 JS 번들 역분석: 음성 제어, 원본/신스 오디오, 루프·속도·피치 상세, 상태 스키마, 검증판 단축키
 - [기술 내부구조](docs/songsterr-tech.md) — API 엔드포인트, 데이터 포맷(Guitar Pro/JSON), 렌더링 스택, 클론용 오픈소스(alphaTab 등)
