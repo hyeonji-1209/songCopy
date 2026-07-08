@@ -3,8 +3,11 @@ import { Link } from 'react-router-dom'
 import { fetchSongs, type SongMeta } from '../lib/api'
 import OpenFileButton from '../components/OpenFileButton'
 
+const INSTRUMENT_FILTERS = ['전체', '기타', '베이스', '드럼']
+
 export default function Home() {
   const [query, setQuery] = useState('')
+  const [instrument, setInstrument] = useState('전체')
   const [songs, setSongs] = useState<SongMeta[] | null>(null)
   const [error, setError] = useState(false)
 
@@ -42,6 +45,17 @@ export default function Home() {
         onChange={(e) => setQuery(e.target.value)}
         autoFocus
       />
+      <div className="inst-filters">
+        {INSTRUMENT_FILTERS.map((f) => (
+          <button
+            key={f}
+            className={`chip ${instrument === f ? 'on' : ''}`}
+            onClick={() => setInstrument(f)}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
       <ul className="song-list">
         {error && (
           <li className="song-empty">
@@ -49,7 +63,9 @@ export default function Home() {
             실행하세요.
           </li>
         )}
-        {songs?.map((s) => (
+        {songs
+          ?.filter((s) => instrument === '전체' || s.instruments.includes(instrument))
+          .map((s) => (
           <li key={s.slug}>
             <Link className="song-row" to={`/tab/${s.slug}`}>
               <span className="song-row-title">{s.title}</span>

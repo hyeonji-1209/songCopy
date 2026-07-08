@@ -24,6 +24,7 @@ interface TrackInfo {
   name: string
   mute: boolean
   solo: boolean
+  visible: boolean
 }
 
 const SPEED_PRESETS = [15, 25, 50, 75, 100, 125, 150, 175]
@@ -76,6 +77,7 @@ export default function SongPage() {
   const [leftHanded, setLeftHanded] = useState(false)
   const [tuning, setTuning] = useState<number[]>([])
   const [activeNotes, setActiveNotes] = useState<ActiveNote[]>([])
+  const [masterVolume, setMasterVolume] = useState(100)
   const [audioSource, setAudioSource] = useState<'synth' | 'original'>('synth')
   const [syncOffset, setSyncOffset] = useState(0) // 초
   const [syncScale, setSyncScale] = useState(100) // %
@@ -150,6 +152,7 @@ export default function SongPage() {
           name: t.name,
           mute: false,
           solo: false,
+          visible: t.index === 0,
         })),
       )
       setScoreMeta({ title: score.title, artist: score.artist })
@@ -572,6 +575,25 @@ export default function SongPage() {
   const print = () => apiRef.current?.print()
   const downloadMidi = () => apiRef.current?.downloadMidi()
 
+  const downloadGp = () => {
+    const api = apiRef.current
+    if (!api?.score) return
+    const bytes = new alphaTab.exporter.Gp7Exporter().export(api.score, api.settings)
+    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/octet-stream' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${api.score.title || 'tab'}.gp`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const changeMasterVolume = (value: number) => {
+    const v = Math.min(100, Math.max(0, value))
+    setMasterVolume(v)
+    if (apiRef.current) apiRef.current.masterVolume = v / 100
+  }
+
   const changeSpeed = (value: number) => {
     const v = Math.min(175, Math.max(15, value))
     setSpeed(v)
@@ -637,7 +659,21 @@ export default function SongPage() {
     setActiveTrack(index)
     setTuning([...(track.staves[0]?.tuning ?? [])])
     setActiveNotes([])
+    setTracks((prev) => prev.map((t) => ({ ...t, visible: t.index === index })))
     api.renderTracks([track])
+  }
+
+  // 멀티트랙 동시 보기: 체크된 트랙들을 함께 렌더 (Songsterr "Add to multi-track")
+  const toggleMultiTrack = (index: number) => {
+    const api = apiRef.current
+    if (!api?.score) return
+    setTracks((prev) => {
+      const next = prev.map((t) => (t.index === index ? { ...t, visible: !t.visible } : t))
+      const visible = next.filter((t) => t.visible)
+      if (visible.length === 0) return prev // 최소 1개는 유지
+      api.renderTracks(visible.map((t) => api.score!.tracks[t.index]))
+      return next
+    })
   }
 
   const toggleMute = (index: number) => {
@@ -677,6 +713,12 @@ export default function SongPage() {
           changeSpeed(SPEED_PRESETS[n - 1])
           return
         }
+      }
+      // Shift+A/D: 속도 미세 조정 (Songsterr는 BPM ±1, 여기서는 ±1%)
+      if (e.shiftKey && (e.code === 'KeyA' || e.code === 'KeyD')) {
+        e.preventDefault()
+        changeSpeed(speed + (e.code === 'KeyD' ? 1 : -1))
+        return
       }
 
       // 편집 모드 전용 키
@@ -755,7 +797,7 @@ export default function SongPage() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTrack, isOriginal, editMode])
+  }, [activeTrack, isOriginal, editMode, speed])
 
   if (songError) {
     return (
@@ -876,6 +918,13 @@ export default function SongPage() {
                 {t.name}
               </button>
               <button
+                className={`chip ${t.visible ? 'on' : ''}`}
+                onClick={() => toggleMultiTrack(t.index)}
+                title="멀티트랙 표시 (여러 트랙 동시 보기)"
+              >
+                👁
+              </button>
+              <button
                 className={`chip ${t.solo ? 'on' : ''}`}
                 onClick={() => toggleSolo(t.index)}
                 title="솔로"
@@ -891,6 +940,7 @@ export default function SongPage() {
               </button>
             </div>
           ))}
+          <p className="panel-note">👁 를 여러 개 켜면 트랙을 동시에 볼 수 있습니다.</p>
         </div>
       )}
 
@@ -1004,11 +1054,27 @@ export default function SongPage() {
             다크 모드
           </label>
           <div className="panel-title" style={{ marginTop: 12 }}>
+            마스터 볼륨: {masterVolume}%
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={masterVolume}
+            onChange={(e) => changeMasterVolume(Number(e.target.value))}
+            style={{ width: '100%', accentColor: 'var(--green)' }}
+          />
+          <div className="panel-title" style={{ marginTop: 12 }}>
             다운로드
           </div>
-          <button className="chip" onClick={downloadMidi}>
-            MIDI 다운로드
-          </button>
+          <div className="speed-presets">
+            <button className="chip" onClick={downloadMidi}>
+              MIDI
+            </button>
+            <button className="chip" onClick={downloadGp}>
+              Guitar Pro (.gp)
+            </button>
+          </div>
         </div>
       )}
 

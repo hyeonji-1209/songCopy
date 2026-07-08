@@ -1022,3 +1022,9 @@ kbd {
   color: var(--ink-soft);
   margin: 0 2px 0 8px;
 }
+
+.inst-filters {
+  display: flex;
+  gap: 6px;
+  margin-top: 16px;
+}
