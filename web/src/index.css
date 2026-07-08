@@ -1275,3 +1275,25 @@ kbd {
 .track-vol:disabled {
   opacity: 0.35;
 }
+
+.newtab-bpm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.newtab-bpm input {
+  width: 70px;
+}
+
+.newtab-form input[type='file'] {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.tag.ai {
+  background: rgba(112, 76, 214, 0.14);
+  color: #7a5cd8;
+}

@@ -1,7 +1,8 @@
 import http from 'node:http'
+import { spawnSync } from 'node:child_process'
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SONGS } from '../../web/src/data/songs.ts'
@@ -56,6 +57,11 @@ try {
 } catch {
   /* 이미 있음 */
 }
+try {
+  db.exec('ALTER TABLE songs ADD COLUMN source TEXT')
+} catch {
+  /* 이미 있음 */
+}
 db.exec(`
   CREATE TABLE IF NOT EXISTS revision_votes (
     revision_id INTEGER NOT NULL REFERENCES revisions(id),
@@ -91,6 +97,7 @@ interface SongRow {
   instruments: string
   seed_date: string
   tex: string
+  source?: string | null
 }
 
 const qList = db.prepare('SELECT * FROM songs ORDER BY title')
@@ -171,9 +178,113 @@ function songMeta(row: SongRow) {
     artist: row.artist,
     instruments: JSON.parse(row.instruments) as string[],
     seedDate: row.seed_date,
+    source: row.source ?? null,
     latestRevision: revs[0] ?? null,
     revisionCount: revs.length,
   }
+}
+
+function uniqueSlug(title: string, artist: string): string {
+  const base =
+    `${artist}-${title}`
+      .toLowerCase()
+      .replace(/[^a-z0-9가-힣]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'song'
+  let slug = base
+  for (let n = 2; qBySlug.get(slug); n++) slug = `${base}-${n}`
+  return slug
+}
+
+// ── AI 채보: 노트 이벤트 → alphaTex 변환 ──
+interface NoteEvent {
+  start: number
+  end: number
+  midi: number
+}
+
+const GUITAR_TUNING = [64, 59, 55, 50, 45, 40] // alphaTex string 1(高)~6(低)
+
+function notesToAlphaTex(notes: NoteEvent[], bpm: number, title: string, artist: string): string {
+  const grid = 30 / bpm // 8분음표(초)
+  const SLOTS_PER_BAR = 8
+  const MAX_BARS = 64
+
+  // 슬롯 양자화 + 같은 슬롯은 코드로 묶기
+  const bySlot = new Map<number, { midi: number; durSlots: number }[]>()
+  for (const n of notes) {
+    const slot = Math.round(n.start / grid)
+    if (slot >= MAX_BARS * SLOTS_PER_BAR) continue
+    const durSlots = Math.max(1, Math.min(8, Math.round((n.end - n.start) / grid)))
+    // 기타 음역(E2~C6)으로 옥타브 이동
+    let midi = n.midi
+    while (midi < 40) midi += 12
+    while (midi > 84) midi -= 12
+    if (!bySlot.has(slot)) bySlot.set(slot, [])
+    bySlot.get(slot)!.push({ midi, durSlots })
+  }
+  if (bySlot.size === 0) throw new Error('no notes detected')
+
+  const slots = [...bySlot.keys()].sort((a, b) => a - b)
+  const lastSlot = slots[slots.length - 1]
+  const totalBars = Math.min(MAX_BARS, Math.ceil((lastSlot + 1) / SLOTS_PER_BAR))
+  const DUR: Record<number, string> = { 1: ':8', 2: ':4', 4: ':2', 8: ':1' }
+  const fitDur = (avail: number) => (avail >= 8 ? 8 : avail >= 4 ? 4 : avail >= 2 ? 2 : 1)
+
+  // 피치 → (프렛.현): 이전 포지션과 가까운 낮은 프렛 우선
+  let prevFret = 0
+  const mapNote = (midi: number, used: Set<number>): string | null => {
+    let best: { fret: number; string: number } | null = null
+    for (let s = 0; s < GUITAR_TUNING.length; s++) {
+      const stringNo = s + 1
+      if (used.has(stringNo)) continue
+      const fret = midi - GUITAR_TUNING[s]
+      if (fret < 0 || fret > 20) continue
+      if (!best || Math.abs(fret - prevFret) + fret * 0.3 < Math.abs(best.fret - prevFret) + best.fret * 0.3) {
+        best = { fret, string: stringNo }
+      }
+    }
+    if (!best) return null
+    used.add(best.string)
+    prevFret = best.fret
+    return `${best.fret}.${best.string}`
+  }
+
+  const bars: string[] = []
+  let cursor = 0
+  for (let bar = 0; bar < totalBars; bar++) {
+    const barEnd = (bar + 1) * SLOTS_PER_BAR
+    const tokens: string[] = []
+    while (cursor < barEnd) {
+      const events = bySlot.get(cursor)
+      const nextEventSlot = slots.find((s) => s > cursor) ?? Infinity
+      if (events && events.length > 0) {
+        const wanted = Math.max(...events.map((e) => e.durSlots))
+        const avail = Math.min(wanted, nextEventSlot - cursor, barEnd - cursor)
+        const dur = fitDur(avail)
+        const used = new Set<number>()
+        const mapped = events.map((e) => mapNote(e.midi, used)).filter(Boolean) as string[]
+        if (mapped.length === 0) tokens.push(`${DUR[dur]} r`)
+        else if (mapped.length === 1) tokens.push(`${DUR[dur]} ${mapped[0]}`)
+        else tokens.push(`${DUR[dur]} (${mapped.join(' ')})`)
+        cursor += dur
+      } else {
+        const restUntil = Math.min(nextEventSlot, barEnd)
+        const dur = fitDur(restUntil - cursor)
+        tokens.push(`${DUR[dur]} r`)
+        cursor += dur
+      }
+    }
+    bars.push(tokens.join(' '))
+  }
+
+  const esc = (s: string) => s.replace(/"/g, '\\"')
+  return `\\title "${esc(title)}"
+\\subtitle "${esc(artist)}"
+\\tempo ${bpm}
+.
+\\track "기타 (AI 채보)"
+\\staff {score tabs}
+${bars.join(' |\n')}`
 }
 
 function json(
@@ -291,14 +402,7 @@ const server = http.createServer(async (req, res) => {
       const artist = body.artist?.trim() || 'Unknown'
       if (!title) return json(res, 400, { error: '제목이 필요합니다' })
 
-      const base =
-        `${artist}-${title}`
-          .toLowerCase()
-          .replace(/[^a-z0-9가-힣]+/g, '-')
-          .replace(/^-+|-+$/g, '') || 'song'
-      let slug = base
-      for (let n = 2; qBySlug.get(slug); n++) slug = `${base}-${n}`
-
+      const slug = uniqueSlug(title, artist)
       const esc = (s: string) => s.replace(/"/g, '\\"')
       const tex = `\\title "${esc(title)}"
 \\subtitle "${esc(artist)}"
@@ -309,6 +413,56 @@ const server = http.createServer(async (req, res) => {
 :1 r | r | r | r | r | r | r | r`
       insertSong.run(slug, title, artist, JSON.stringify(['기타']), new Date().toISOString(), tex)
       return json(res, 201, { slug })
+    }
+
+    // POST /api/transcribe — AI 채보: 오디오 → 탭 (로그인 필요)
+    if (req.method === 'POST' && path === '/api/transcribe') {
+      const user = currentUser(req)
+      if (!user) return json(res, 401, { error: 'sign in required' })
+      const body = JSON.parse(await readBody(req)) as {
+        b64?: string
+        title?: string
+        artist?: string
+        bpm?: number
+        ext?: string
+      }
+      const title = body.title?.trim()
+      if (!title || !body.b64) return json(res, 400, { error: '제목과 오디오 파일이 필요합니다' })
+      const audio = Buffer.from(body.b64, 'base64')
+      if (audio.length > 15_000_000) return json(res, 413, { error: '오디오는 15MB 이하만 가능합니다' })
+      const bpm = Math.min(220, Math.max(40, Math.round(body.bpm ?? 120)))
+      const ext = /^[a-z0-9]{1,5}$/.test(body.ext ?? '') ? body.ext : 'wav'
+
+      const tmp = join(DATA_DIR, `transcribe-${randomUUID()}.${ext}`)
+      writeFileSync(tmp, audio)
+      try {
+        const script = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'transcribe.py')
+        const proc = spawnSync('python3', [script, tmp], {
+          timeout: 180_000,
+          maxBuffer: 32 * 1024 * 1024,
+          encoding: 'utf-8',
+        })
+        if (proc.status !== 0) {
+          console.error('transcribe failed:', proc.stderr?.slice(0, 500))
+          return json(res, 500, { error: 'AI 채보 실행 실패 (basic-pitch 설치 확인)' })
+        }
+        const result = JSON.parse(proc.stdout) as { notes?: NoteEvent[]; error?: string }
+        if (result.error || !result.notes?.length) {
+          return json(res, 422, { error: '오디오에서 노트를 감지하지 못했습니다' })
+        }
+        const artist = body.artist?.trim() || 'AI 채보'
+        const tex = notesToAlphaTex(result.notes, bpm, title, artist)
+        const slug = uniqueSlug(title, artist)
+        insertSong.run(slug, title, artist, JSON.stringify(['기타']), new Date().toISOString(), tex)
+        db.prepare('UPDATE songs SET source = ? WHERE slug = ?').run('ai', slug)
+        return json(res, 201, { slug, noteCount: result.notes.length })
+      } finally {
+        try {
+          unlinkSync(tmp)
+        } catch {
+          /* 무시 */
+        }
+      }
     }
 
     // GET /api/songs?pattern=

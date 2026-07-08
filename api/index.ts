@@ -45,6 +45,9 @@ export default function handler(req: Req & { url?: string }, res: Res) {
     }
   }
 
+  // /api/transcribe — 데모에서는 비활성 (python 필요)
+  if (a === 'transcribe') return res.status(503).json({ error: DEMO_MESSAGE })
+
   // /api/auth/*
   if (a === 'auth') {
     if (b === 'me') return res.status(200).json(null)

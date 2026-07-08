@@ -7,6 +7,9 @@ Songsterr(https://www.songsterr.com/) 클론 웹 프로젝트.
 터미널 두 개가 필요합니다:
 
 ```bash
+# 0) AI 채보 기능을 쓰려면 (선택)
+pip3 install --user basic-pitch
+
 # 1) API 서버 (포트 3001)
 cd server
 npm run dev

@@ -71,6 +71,7 @@ export default function Home() {
               <span className="song-row-title">{s.title}</span>
               <span className="song-row-artist">{s.artist}</span>
               <span className="song-row-tags">
+                {s.source === 'ai' && <span className="tag ai">AI 채보</span>}
                 {s.revisionCount > 0 && <span className="tag rev">리비전 {s.revisionCount}</span>}
                 {s.instruments.map((i) => (
                   <span className="tag" key={i}>
