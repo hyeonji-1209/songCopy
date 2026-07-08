@@ -52,9 +52,12 @@ try {
   /* 이미 있음 */
 }
 
-// 시드: web/src/data/songs.ts 가 단일 소스
+// 시드: web/src/data/songs.ts 가 단일 소스. 편곡이 갱신되면 기존 행도 업데이트(업서트).
 const insertSong = db.prepare(
-  'INSERT OR IGNORE INTO songs (slug, title, artist, instruments, seed_date, tex) VALUES (?, ?, ?, ?, ?, ?)',
+  `INSERT INTO songs (slug, title, artist, instruments, seed_date, tex) VALUES (?, ?, ?, ?, ?, ?)
+   ON CONFLICT(slug) DO UPDATE SET
+     title = excluded.title, artist = excluded.artist,
+     instruments = excluded.instruments, tex = excluded.tex`,
 )
 for (const s of SONGS) {
   insertSong.run(s.slug, s.title, s.artist, JSON.stringify(s.instruments), s.revisionDate, s.tex)

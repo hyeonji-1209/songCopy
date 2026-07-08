@@ -171,6 +171,8 @@ export default function SongPage() {
     api.beatMouseDown.on((beat) => {
       if (!editModeRef.current) return
       if (beat.voice.bar.staff.track.index !== activeTrackRef.current) return
+      // 에디터는 현악기 트랙만 지원 (키보드/드럼은 string/fret 개념이 없음)
+      if ((beat.voice.bar.staff.tuning.length || 0) === 0) return
       const bl = api.renderer.boundsLookup
       const { x, y } = lastPointerRef.current
       const note = bl?.getNoteAtPos(beat, x, y) ?? null

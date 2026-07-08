@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { fetchSongs, type SongMeta } from '../lib/api'
 import OpenFileButton from '../components/OpenFileButton'
 
-const INSTRUMENT_FILTERS = ['전체', '기타', '베이스', '드럼']
+const INSTRUMENT_FILTERS = ['전체', '기타', '키보드', '베이스', '드럼']
 
 export default function Home() {
   const [query, setQuery] = useState('')

@@ -15,7 +15,7 @@ export const SONGS: SongDef[] = [
     slug: 'beethoven-ode-to-joy',
     title: 'Ode to Joy',
     artist: 'Ludwig van Beethoven',
-    instruments: ['기타', '베이스'],
+    instruments: ['기타', '키보드', '베이스', '드럼'],
     revisionDate: '2026. 7. 8.',
     tex: `\\title "Ode to Joy"
 \\subtitle "Ludwig van Beethoven"
@@ -33,6 +33,17 @@ export const SONGS: SongDef[] = [
 3.1 1.1 0.1 3.2 |
 1.2 1.2 3.2 0.1 |
 :2 3.2 1.2
+\\track "키보드"
+\\staff {score}
+\\instrument 0
+:2 (c3 e3 g3) (c3 e3 g3) |
+(c3 e3 g3) (b2 d3 g3) |
+(c3 e3 g3) (b2 d3 g3) |
+(c3 e3 g3) (b2 d3 g3) |
+(c3 e3 g3) (c3 e3 g3) |
+(c3 e3 g3) (b2 d3 g3) |
+(c3 e3 g3) (b2 d3 g3) |
+(b2 d3 g3) (c3 e3 g3)
 \\track "베이스"
 \\staff {tabs}
 \\instrument 33
@@ -44,14 +55,25 @@ export const SONGS: SongDef[] = [
 3.3 3.4 |
 3.4 3.4 |
 3.3 3.4 |
-3.4 3.3`,
+3.4 3.3
+\\track "드럼"
+\\instrument percussion
+\\articulation defaults
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed :4 SnareHit SnareHit |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:4 KickHit SnareHit :2 KickHit`,
   },
   {
     id: '2',
     slug: 'traditional-twinkle-twinkle-little-star',
     title: 'Twinkle Twinkle Little Star',
     artist: 'Traditional',
-    instruments: ['기타'],
+    instruments: ['기타', '키보드', '베이스', '드럼'],
     revisionDate: '2026. 7. 8.',
     tex: `\\title "Twinkle Twinkle Little Star"
 \\subtitle "Traditional"
@@ -74,14 +96,60 @@ export const SONGS: SongDef[] = [
 :4 1.2 1.2 3.1 3.1 |
 5.1 5.1 :2 3.1 |
 :4 1.1 1.1 0.1 0.1 |
-3.2 3.2 :2 1.2`,
+3.2 3.2 :2 1.2
+\\track "키보드"
+\\staff {score}
+\\instrument 0
+:2 (c3 e3 g3) (c3 e3 g3) |
+(c3 f3 a3) (c3 e3 g3) |
+(c3 f3 a3) (c3 e3 g3) |
+(b2 d3 g3) (c3 e3 g3) |
+(c3 e3 g3) (c3 f3 a3) |
+(c3 e3 g3) (b2 d3 g3) |
+(c3 e3 g3) (c3 f3 a3) |
+(c3 e3 g3) (b2 d3 g3) |
+(c3 e3 g3) (c3 e3 g3) |
+(c3 f3 a3) (c3 e3 g3) |
+(c3 f3 a3) (c3 e3 g3) |
+(b2 d3 g3) (c3 e3 g3)
+\\track "베이스"
+\\staff {tabs}
+\\instrument 33
+\\tuning g2 d2 a1 e1
+:2 3.3 3.3 |
+1.4 3.3 |
+1.4 3.3 |
+3.4 3.3 |
+3.3 1.4 |
+3.3 3.4 |
+3.3 1.4 |
+3.3 3.4 |
+3.3 3.3 |
+1.4 3.3 |
+1.4 3.3 |
+3.4 3.3
+\\track "드럼"
+\\instrument percussion
+\\articulation defaults
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed :4 SnareHit SnareHit |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed :4 SnareHit SnareHit |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:4 KickHit SnareHit :2 KickHit`,
   },
   {
     id: '3',
     slug: 'pierpont-jingle-bells',
     title: 'Jingle Bells',
     artist: 'James Lord Pierpont',
-    instruments: ['기타'],
+    instruments: ['기타', '키보드', '베이스', '드럼'],
     revisionDate: '2026. 7. 8.',
     tex: `\\title "Jingle Bells"
 \\subtitle "James Lord Pierpont"
@@ -98,7 +166,41 @@ export const SONGS: SongDef[] = [
 :4 1.1 1.1 1.1 1.1 |
 :4 1.1 0.1 :2 0.1 |
 :4 0.1 3.2 3.2 0.1 |
-:2 3.2 3.1`,
+:2 3.2 3.1
+\\track "키보드"
+\\staff {score}
+\\instrument 0
+:2 (c3 e3 g3) (c3 e3 g3) |
+(c3 e3 g3) (c3 e3 g3) |
+(c3 e3 g3) (c3 e3 g3) |
+(c3 e3 g3) (b2 d3 g3) |
+(c3 f3 a3) (c3 f3 a3) |
+(c3 e3 g3) (c3 e3 g3) |
+(b2 d3 g3) (b2 d3 g3) |
+(b2 d3 g3) (c3 e3 g3)
+\\track "베이스"
+\\staff {tabs}
+\\instrument 33
+\\tuning g2 d2 a1 e1
+:2 3.3 3.3 |
+3.3 3.3 |
+3.3 3.3 |
+3.3 3.4 |
+1.4 1.4 |
+3.3 3.3 |
+3.4 3.4 |
+3.4 3.3
+\\track "드럼"
+\\instrument percussion
+\\articulation defaults
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed :4 SnareHit SnareHit |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:8 (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed (KickHit HiHatClosed) HiHatClosed (SnareHit HiHatClosed) HiHatClosed |
+:4 KickHit SnareHit :2 KickHit`,
   },
 ]
 
