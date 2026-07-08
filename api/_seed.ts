@@ -36,14 +36,14 @@ export const SONGS: SongDef[] = [
 \\track "키보드"
 \\staff {score}
 \\instrument 0
-:2 (c3 e3 g3) (c3 e3 g3) |
-(c3 e3 g3) (b2 d3 g3) |
-(c3 e3 g3) (b2 d3 g3) |
-(c3 e3 g3) (b2 d3 g3) |
-(c3 e3 g3) (c3 e3 g3) |
-(c3 e3 g3) (b2 d3 g3) |
-(c3 e3 g3) (b2 d3 g3) |
-(b2 d3 g3) (c3 e3 g3)
+:2 (c4 e4 g4) (c4 e4 g4) |
+(c4 e4 g4) (b3 d4 g4) |
+(c4 e4 g4) (b3 d4 g4) |
+(c4 e4 g4) (b3 d4 g4) |
+(c4 e4 g4) (c4 e4 g4) |
+(c4 e4 g4) (b3 d4 g4) |
+(c4 e4 g4) (b3 d4 g4) |
+(b3 d4 g4) (c4 e4 g4)
 \\track "베이스"
 \\staff {tabs}
 \\instrument 33
@@ -100,18 +100,18 @@ export const SONGS: SongDef[] = [
 \\track "키보드"
 \\staff {score}
 \\instrument 0
-:2 (c3 e3 g3) (c3 e3 g3) |
-(c3 f3 a3) (c3 e3 g3) |
-(c3 f3 a3) (c3 e3 g3) |
-(b2 d3 g3) (c3 e3 g3) |
-(c3 e3 g3) (c3 f3 a3) |
-(c3 e3 g3) (b2 d3 g3) |
-(c3 e3 g3) (c3 f3 a3) |
-(c3 e3 g3) (b2 d3 g3) |
-(c3 e3 g3) (c3 e3 g3) |
-(c3 f3 a3) (c3 e3 g3) |
-(c3 f3 a3) (c3 e3 g3) |
-(b2 d3 g3) (c3 e3 g3)
+:2 (c4 e4 g4) (c4 e4 g4) |
+(c4 f4 a4) (c4 e4 g4) |
+(c4 f4 a4) (c4 e4 g4) |
+(b3 d4 g4) (c4 e4 g4) |
+(c4 e4 g4) (c4 f4 a4) |
+(c4 e4 g4) (b3 d4 g4) |
+(c4 e4 g4) (c4 f4 a4) |
+(c4 e4 g4) (b3 d4 g4) |
+(c4 e4 g4) (c4 e4 g4) |
+(c4 f4 a4) (c4 e4 g4) |
+(c4 f4 a4) (c4 e4 g4) |
+(b3 d4 g4) (c4 e4 g4)
 \\track "베이스"
 \\staff {tabs}
 \\instrument 33
@@ -170,14 +170,14 @@ export const SONGS: SongDef[] = [
 \\track "키보드"
 \\staff {score}
 \\instrument 0
-:2 (c3 e3 g3) (c3 e3 g3) |
-(c3 e3 g3) (c3 e3 g3) |
-(c3 e3 g3) (c3 e3 g3) |
-(c3 e3 g3) (b2 d3 g3) |
-(c3 f3 a3) (c3 f3 a3) |
-(c3 e3 g3) (c3 e3 g3) |
-(b2 d3 g3) (b2 d3 g3) |
-(b2 d3 g3) (c3 e3 g3)
+:2 (c4 e4 g4) (c4 e4 g4) |
+(c4 e4 g4) (c4 e4 g4) |
+(c4 e4 g4) (c4 e4 g4) |
+(c4 e4 g4) (b3 d4 g4) |
+(c4 f4 a4) (c4 f4 a4) |
+(c4 e4 g4) (c4 e4 g4) |
+(b3 d4 g4) (b3 d4 g4) |
+(b3 d4 g4) (c4 e4 g4)
 \\track "베이스"
 \\staff {tabs}
 \\instrument 33
