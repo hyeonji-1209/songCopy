@@ -23,12 +23,23 @@ import tempfile
 MELODIC_STEMS = ("vocals", "guitar", "piano", "other", "bass")
 
 
-def notes_from(events, min_amp=0.3):
+def notes_from(events, min_amp=0.2):
     return [
         {"start": round(float(s), 4), "end": round(float(e), 4), "midi": int(p), "amp": round(float(a), 3)}
         for s, e, p, a, _bends in sorted(events)
         if a >= min_amp
     ]
+
+
+def predict_dense(predict, path):
+    """민감도를 높인 채보: 낮은 임계값 + 짧은 음(60ms) 허용 → 최대한 많은 음을 잡는다."""
+    _, _, ev = predict(
+        path,
+        onset_threshold=0.4,
+        frame_threshold=0.25,
+        minimum_note_length=60,
+    )
+    return ev
 
 
 def stem_has_content(path):
@@ -140,8 +151,8 @@ def main() -> None:
                     if not path or not stem_has_content(path):
                         continue
                     try:
-                        _, _, ev = predict(path)
-                        notes = notes_from(ev, 0.35 if name != "bass" else 0.3)
+                        ev = predict_dense(predict, path)
+                        notes = notes_from(ev, 0.25 if name != "bass" else 0.2)
                         if len(notes) >= 8:  # 존재 판단: 유의미한 노트 수
                             out["tracks"][name] = notes
                     except Exception:
@@ -156,7 +167,7 @@ def main() -> None:
                 if out["tracks"]["vocals"]:
                     out["lyrics"] = extract_lyrics(stems["vocals"])
             else:
-                _, _, ev = predict(audio)
+                ev = predict_dense(predict, audio)
                 out["tracks"]["other"] = notes_from(ev)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

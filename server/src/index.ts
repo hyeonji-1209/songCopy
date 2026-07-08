@@ -211,10 +211,12 @@ interface NoteEvent {
 const GUITAR_TUNING = [64, 59, 55, 50, 45, 40] // alphaTex string 1(高)~6(低)
 const BASS_TUNING = [43, 38, 33, 28] // g2 d2 a1 e1
 
-const SLOTS_PER_BAR = 8
-const MAX_BARS = 64
-const DUR: Record<number, string> = { 1: ':8', 2: ':4', 4: ':2', 8: ':1' }
-const fitDur = (avail: number) => (avail >= 8 ? 8 : avail >= 4 ? 4 : avail >= 2 ? 2 : 1)
+// 16분음표 그리드: 빠른 프레이즈·잔음까지 보존
+const SLOTS_PER_BAR = 16
+const MAX_BARS = 128
+const DUR: Record<number, string> = { 1: ':16', 2: ':8', 4: ':4', 8: ':2', 16: ':1' }
+const fitDur = (avail: number) =>
+  avail >= 16 ? 16 : avail >= 8 ? 8 : avail >= 4 ? 4 : avail >= 2 ? 2 : 1
 
 const PITCH_NAMES = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b']
 const pitchName = (midi: number) => `${PITCH_NAMES[midi % 12]}${Math.floor(midi / 12) - 1}`
@@ -222,14 +224,14 @@ const pitchName = (midi: number) => `${PITCH_NAMES[midi % 12]}${Math.floor(midi 
 /** 노트 이벤트 → 마디별 alphaTex 토큰.
  * tuning 지정 시 프렛 매핑(탭), null이면 음이름(피아노/신스 등 오선보 전용) */
 function notesToBars(notes: NoteEvent[], bpm: number, tuning: number[] | null): string[] | null {
-  const grid = 30 / bpm
+  const grid = 15 / bpm // 16분음표(초)
   const lowest = tuning ? tuning[tuning.length - 1] : 36
   const highest = tuning ? tuning[0] + 20 : 96
   const bySlot = new Map<number, { midi: number; durSlots: number }[]>()
   for (const n of notes) {
     const slot = Math.round(n.start / grid)
     if (slot >= MAX_BARS * SLOTS_PER_BAR) continue
-    const durSlots = Math.max(1, Math.min(8, Math.round((n.end - n.start) / grid)))
+    const durSlots = Math.max(1, Math.min(SLOTS_PER_BAR, Math.round((n.end - n.start) / grid)))
     let midi = n.midi
     while (midi < lowest) midi += 12
     while (midi > highest) midi -= 12
@@ -297,9 +299,9 @@ interface DrumEvent {
   kind: 'kick' | 'snare' | 'hat'
 }
 
-/** 드럼 온셋 → 8분음표 그리드 퍼커션 토큰 */
+/** 드럼 온셋 → 16분음표 그리드 퍼커션 토큰 */
 function drumsToBars(events: DrumEvent[], bpm: number): string[] | null {
-  const grid = 30 / bpm
+  const grid = 15 / bpm
   const ART: Record<DrumEvent['kind'], string> = {
     kick: 'KickHit',
     snare: 'SnareHit',
@@ -321,9 +323,9 @@ function drumsToBars(events: DrumEvent[], bpm: number): string[] | null {
     const tokens: string[] = []
     for (let s = bar * SLOTS_PER_BAR; s < (bar + 1) * SLOTS_PER_BAR; s++) {
       const hits = bySlot.get(s)
-      if (!hits || hits.size === 0) tokens.push(':8 r')
-      else if (hits.size === 1) tokens.push(`:8 ${[...hits][0]}`)
-      else tokens.push(`:8 (${[...hits].join(' ')})`)
+      if (!hits || hits.size === 0) tokens.push(':16 r')
+      else if (hits.size === 1) tokens.push(`:16 ${[...hits][0]}`)
+      else tokens.push(`:16 (${[...hits].join(' ')})`)
     }
     bars.push(tokens.join(' '))
   }
