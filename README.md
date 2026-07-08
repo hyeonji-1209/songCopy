@@ -34,7 +34,11 @@ docker run -p 3001:3001 -v songcopy-data:/app/server/data songcopy
 # → http://localhost:3001
 ```
 
-> **Vercel 주의**: Vercel은 서버리스라 파일시스템이 휘발성입니다. 지금 구조 그대로 올리면 SQLite DB(계정·리비전)가 요청마다 초기화됩니다. Vercel을 쓰려면 ① 프론트만 Vercel + API는 컨테이너 호스팅으로 분리하거나 ② DB를 Turso/Vercel Postgres 등 외부 DB로 교체해야 합니다.
+### Vercel 데모 (배포됨)
+
+**https://songcopy.vercel.app** — `api/`의 서버리스 함수가 시드 곡을 읽기 전용으로 서빙하는 **데모 모드**입니다. 플레이어·에디터·지판 등 클라이언트 기능은 전부 동작하지만, Vercel 서버리스는 파일시스템이 휘발성이라 **계정·리비전 저장은 비활성화**되어 있습니다(시도 시 안내 메시지). 재배포: `npx vercel deploy --prod`.
+
+전체 기능(DB 포함)을 배포하려면 위 Docker 방식(Railway/Fly/Render)을 쓰거나, DB를 Turso/Vercel Postgres로 교체해야 합니다.
 
 ## API
 
