@@ -206,6 +206,9 @@ interface NoteEvent {
   start: number
   end: number
   midi: number
+  /** 비트 정렬 양자화 슬롯 (16분음표 단위) — 스크립트가 부여 */
+  qs?: number
+  qd?: number
 }
 
 const GUITAR_TUNING = [64, 59, 55, 50, 45, 40] // alphaTex string 1(高)~6(低)
@@ -229,9 +232,13 @@ function notesToBars(notes: NoteEvent[], bpm: number, tuning: number[] | null): 
   const highest = tuning ? tuning[0] + 20 : 96
   const bySlot = new Map<number, { midi: number; durSlots: number }[]>()
   for (const n of notes) {
-    const slot = Math.round(n.start / grid)
+    // 비트 정렬 슬롯이 있으면 우선 사용 (템포 드리프트 보정됨)
+    const slot = n.qs ?? Math.round(n.start / grid)
     if (slot >= MAX_BARS * SLOTS_PER_BAR) continue
-    const durSlots = Math.max(1, Math.min(SLOTS_PER_BAR, Math.round((n.end - n.start) / grid)))
+    const durSlots = Math.max(
+      1,
+      Math.min(SLOTS_PER_BAR, n.qd ?? Math.round((n.end - n.start) / grid)),
+    )
     let midi = n.midi
     while (midi < lowest) midi += 12
     while (midi > highest) midi -= 12
@@ -295,7 +302,8 @@ function notesToBars(notes: NoteEvent[], bpm: number, tuning: number[] | null): 
 }
 
 interface DrumEvent {
-  time: number
+  time?: number
+  slot?: number
   kind: 'kick' | 'snare' | 'hat'
 }
 
@@ -310,7 +318,7 @@ function drumsToBars(events: DrumEvent[], bpm: number): string[] | null {
   const bySlot = new Map<number, Set<string>>()
   let lastSlot = 0
   for (const e of events) {
-    const slot = Math.round(e.time / grid)
+    const slot = e.slot ?? Math.round((e.time ?? 0) / grid)
     if (slot >= MAX_BARS * SLOTS_PER_BAR) continue
     if (!bySlot.has(slot)) bySlot.set(slot, new Set())
     bySlot.get(slot)!.add(ART[e.kind])
