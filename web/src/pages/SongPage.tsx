@@ -73,8 +73,13 @@ export default function SongPage() {
   const [song, setSong] = useState<SongMeta | null>(null)
   const [songError, setSongError] = useState(false)
   const [showLyrics, setShowLyrics] = useState(true)
-  // 상시 사이드바 (믹서/표기/다운로드) — T로 접기/펴기, 상태는 localStorage 유지
-  const [sidebar, setSidebar] = useState(() => localStorage.getItem('songcopy:sidebar') !== '0')
+  // 상시 사이드바 (믹서/표기/다운로드) — T로 접기/펴기, 상태는 localStorage 유지.
+  // 좁은 화면은 악보 공간 확보를 위해 기본 접힘
+  const [sidebar, setSidebar] = useState(() => {
+    const saved = localStorage.getItem('songcopy:sidebar')
+    return saved !== null ? saved !== '0' : window.innerWidth > 900
+  })
+  const [sideTab, setSideTab] = useState<'mixer' | 'play' | 'settings'>('mixer')
   const upload = useUpload()
   const favorites = useFavorites()
   const theme = useTheme()
@@ -93,8 +98,7 @@ export default function SongPage() {
   const [countIn, setCountIn] = useState(false)
   const [tracks, setTracks] = useState<TrackInfo[]>([])
   const [activeTrack, setActiveTrack] = useState(0)
-  const [panel, setPanel] = useState<'speed' | 'tracks' | 'pitch' | 'more' | 'sync' | null>(null)
-  const [fourBars, setFourBars] = useState(false)
+  const [fourBars, setFourBars] = useState(true) // 한 줄에 4마디가 기본
   const [dynamics, setDynamics] = useState(true)
   const [notationMode, setNotationMode] = useState<'both' | 'tab' | 'score'>('both')
   const [position, setPosition] = useState({ current: 0, end: 0 })
@@ -128,8 +132,12 @@ export default function SongPage() {
     editModeRef.current = editMode
   }, [editMode])
 
-  const togglePanel = (name: 'speed' | 'tracks' | 'pitch' | 'more' | 'sync') =>
-    setPanel((p) => (p === name ? null : name))
+  // 사이드바의 특정 탭 열기 (단축키 S/R 등에서 사용)
+  const openSideTab = (tab: 'mixer' | 'play' | 'settings') => {
+    setSidebar(true)
+    localStorage.setItem('songcopy:sidebar', '1')
+    setSideTab(tab)
+  }
 
   useEffect(() => {
     activeTrackRef.current = activeTrack
@@ -157,6 +165,10 @@ export default function SongPage() {
       display: {
         layoutMode: alphaTab.LayoutMode.Page,
         scale: 1.1,
+        barsPerRow: 4, // 한 줄에 4마디 기본 (설정에서 해제 가능)
+        padding: [40, 40], // 악보와 테두리 사이 여유
+        systemPaddingTop: 22, // 단(시스템) 사이 간격 — 빽빽함 완화
+        systemPaddingBottom: 22,
         ...(theme === 'dark' ? { resources: DARK_RESOURCES } : {}),
       },
       notation: {
@@ -281,9 +293,8 @@ export default function SongPage() {
       setLoop(false)
       setMetronome(false)
       setCountIn(false)
-      setFourBars(false)
+      setFourBars(true) // 초기 설정 barsPerRow=4와 일치해야 함
       setDynamics(true)
-      setPanel(null)
       setPosition({ current: 0, end: 0 })
       setScoreMeta({ title: '', artist: '' })
       setActiveNotes([])
@@ -915,7 +926,7 @@ export default function SongPage() {
           break
         case 's':
         case 'S':
-          togglePanel('speed')
+          openSideTab('play')
           break
         case 't':
         case 'T':
@@ -923,7 +934,7 @@ export default function SongPage() {
           break
         case 'r':
         case 'R':
-          if (!isOriginal) togglePanel('pitch')
+          if (!isOriginal) openSideTab('play')
           break
         case 'f':
         case 'F':
@@ -989,6 +1000,24 @@ export default function SongPage() {
       <div className="song-body">
         {sidebar && (
           <aside className="side-panel">
+            <div className="side-tabs">
+              {(
+                [
+                  ['mixer', '믹서'],
+                  ['play', '재생'],
+                  ['settings', '설정'],
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  className={`side-tab ${sideTab === k ? 'on' : ''}`}
+                  onClick={() => setSideTab(k)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {sideTab === 'mixer' && (
             <div className="side-section">
               <div className="side-head">
                 <span className="panel-title">믹서</span>
@@ -1059,6 +1088,140 @@ export default function SongPage() {
               )}
               <p className="panel-note">S 솔로 · M 뮤트 · 👁 악보 표시 · 🖨 인쇄 · 슬라이더 볼륨</p>
             </div>
+            )}
+            {sideTab === 'play' && (
+              <>
+                <div className="side-section">
+                  <span className="panel-title">재생 속도: {speed}%</span>
+                  <input
+                    type="range"
+                    min={15}
+                    max={175}
+                    step={5}
+                    value={speed}
+                    onChange={(e) => changeSpeed(Number(e.target.value))}
+                    style={{ width: '100%', accentColor: 'var(--green)' }}
+                  />
+                  <div className="speed-presets">
+                    {SPEED_PRESETS.map((p) => (
+                      <button
+                        key={p}
+                        className={`chip ${speed === p ? 'on' : ''}`}
+                        onClick={() => changeSpeed(p)}
+                      >
+                        {p}%
+                      </button>
+                    ))}
+                  </div>
+                  <p className="panel-note">Shift+1~8 프리셋 · Shift+A/D ±1%</p>
+                </div>
+                <div className="side-section">
+                  <span className="panel-title">재생 보조</span>
+                  <div className="speed-presets">
+                    <button className={`chip ${loop ? 'on' : ''}`} onClick={toggleLoop} title="루프 (L)">
+                      ↻ 루프
+                    </button>
+                    <button
+                      className={`chip ${countIn ? 'on' : ''}`}
+                      onClick={toggleCountIn}
+                      disabled={isOriginal}
+                      title="카운트인 (C)"
+                    >
+                      ③ 카운트인
+                    </button>
+                    <button
+                      className={`chip ${metronome ? 'on' : ''}`}
+                      onClick={toggleMetronome}
+                      disabled={isOriginal}
+                      title="메트로놈 (N)"
+                    >
+                      🎵 메트로놈
+                    </button>
+                    <button
+                      className={`chip ${showFretboard ? 'on' : ''}`}
+                      onClick={() => setShowFretboard((v) => !v)}
+                      title="지판 (F)"
+                    >
+                      🎸 지판
+                    </button>
+                  </div>
+                </div>
+                <div className="side-section">
+                  <span className="panel-title">피치 시프트</span>
+                  <div className="pitch-stepper">
+                    <button
+                      className="chip"
+                      onClick={() => changePitch(pitch - 1)}
+                      disabled={isOriginal || pitch <= -12}
+                    >
+                      −
+                    </button>
+                    <span className="pitch-value">{pitch > 0 ? `+${pitch}` : pitch} 반음</span>
+                    <button
+                      className="chip"
+                      onClick={() => changePitch(pitch + 1)}
+                      disabled={isOriginal || pitch >= 12}
+                    >
+                      +
+                    </button>
+                    <button className="chip" onClick={() => changePitch(0)} disabled={pitch === 0}>
+                      초기화
+                    </button>
+                  </div>
+                </div>
+                {isOriginal && (
+                  <div className="side-section">
+                    <span className="panel-title">원본 오디오 싱크</span>
+                    <div className="sync-row">
+                      <span className="sync-label">오프셋: {syncOffset.toFixed(2)}초</span>
+                      <input
+                        type="range"
+                        min={-10}
+                        max={10}
+                        step={0.05}
+                        value={syncOffset}
+                        onChange={(e) => changeSyncOffset(Number(e.target.value))}
+                      />
+                    </div>
+                    <div className="sync-row">
+                      <span className="sync-label">템포 배율: {syncScale.toFixed(1)}%</span>
+                      <input
+                        type="range"
+                        min={80}
+                        max={120}
+                        step={0.1}
+                        value={syncScale}
+                        onChange={(e) => changeSyncScale(Number(e.target.value))}
+                      />
+                    </div>
+                    <div className="speed-presets">
+                      <button
+                        className="chip"
+                        onClick={() => {
+                          changeSyncOffset(0)
+                          changeSyncScale(100)
+                        }}
+                      >
+                        초기화
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div className="side-section">
+                  <span className="panel-title">마스터 볼륨: {masterVolume}%</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={masterVolume}
+                    onChange={(e) => changeMasterVolume(Number(e.target.value))}
+                    style={{ width: '100%', accentColor: 'var(--green)' }}
+                  />
+                </div>
+              </>
+            )}
+            {sideTab === 'settings' && (
+              <>
             <div className="side-section">
               <span className="panel-title">표기</span>
               <div className="speed-presets">
@@ -1093,6 +1256,25 @@ export default function SongPage() {
                 </button>
               </div>
             </div>
+            <div className="side-section">
+              <span className="panel-title">설정</span>
+              <label className="setting-row">
+                <input type="checkbox" checked={fourBars} onChange={toggleFourBars} />한 줄에 4마디
+              </label>
+              <label className="setting-row">
+                <input type="checkbox" checked={dynamics} onChange={toggleDynamics} />강약 기호 표시
+              </label>
+              <label className="setting-row">
+                <input
+                  type="checkbox"
+                  checked={theme === 'dark'}
+                  onChange={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                />
+                다크 모드
+              </label>
+            </div>
+              </>
+            )}
           </aside>
         )}
         <div className="sheet-viewport" ref={viewportRef}>
@@ -1187,159 +1369,6 @@ export default function SongPage() {
         </div>
       </div>
 
-      {panel === 'speed' && (
-        <div className="speed-panel">
-          <div className="panel-title">재생 속도: {speed}%</div>
-          <input
-            type="range"
-            min={15}
-            max={175}
-            step={5}
-            value={speed}
-            onChange={(e) => changeSpeed(Number(e.target.value))}
-          />
-          <div className="speed-presets">
-            {SPEED_PRESETS.map((p) => (
-              <button
-                key={p}
-                className={`chip ${speed === p ? 'on' : ''}`}
-                onClick={() => changeSpeed(p)}
-              >
-                {p}%
-              </button>
-            ))}
-          </div>
-          <p className="panel-note">Shift+1~8 로 프리셋 선택</p>
-        </div>
-      )}
-
-      {panel === 'pitch' && (
-        <div className="pitch-panel">
-          <div className="panel-title">피치 시프트</div>
-          <div className="pitch-stepper">
-            <button className="chip" onClick={() => changePitch(pitch - 1)} disabled={pitch <= -12}>
-              −
-            </button>
-            <span className="pitch-value">
-              {pitch > 0 ? `+${pitch}` : pitch} 반음
-            </span>
-            <button className="chip" onClick={() => changePitch(pitch + 1)} disabled={pitch >= 12}>
-              +
-            </button>
-            <button className="chip" onClick={() => changePitch(0)} disabled={pitch === 0}>
-              초기화
-            </button>
-          </div>
-          <p className="panel-note">악보 표기는 그대로 두고 신스 오디오의 음정만 이동합니다 (±12).</p>
-        </div>
-      )}
-
-      {panel === 'sync' && (
-        <div className="pitch-panel">
-          <div className="panel-title">원본 오디오 싱크 조정</div>
-          <div className="sync-row">
-            <span className="sync-label">오프셋: {syncOffset.toFixed(2)}초</span>
-            <input
-              type="range"
-              min={-10}
-              max={10}
-              step={0.05}
-              value={syncOffset}
-              onChange={(e) => changeSyncOffset(Number(e.target.value))}
-            />
-          </div>
-          <div className="sync-row">
-            <span className="sync-label">템포 배율: {syncScale.toFixed(1)}%</span>
-            <input
-              type="range"
-              min={80}
-              max={120}
-              step={0.1}
-              value={syncScale}
-              onChange={(e) => changeSyncScale(Number(e.target.value))}
-            />
-          </div>
-          <div className="speed-presets">
-            <button
-              className="chip"
-              onClick={() => {
-                changeSyncOffset(0)
-                changeSyncScale(100)
-              }}
-            >
-              초기화
-            </button>
-          </div>
-          <p className="panel-note">
-            오프셋 = 오디오에서 1마디가 시작하는 시점(인트로 여백). 배율 = 원곡이 악보 템포보다
-            느리면 100%보다 크게.
-          </p>
-        </div>
-      )}
-
-      {panel === 'more' && (
-        <div className="more-panel">
-          <div className="panel-title">설정</div>
-          <label className="setting-row">
-            <input type="checkbox" checked={fourBars} onChange={toggleFourBars} />
-            한 줄에 4마디 표시
-          </label>
-          <label className="setting-row">
-            <input type="checkbox" checked={dynamics} onChange={toggleDynamics} />
-            강약 기호 표시
-          </label>
-          <label className="setting-row">
-            <input
-              type="checkbox"
-              checked={theme === 'dark'}
-              onChange={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            />
-            다크 모드
-          </label>
-          <div className="panel-title" style={{ marginTop: 12 }}>
-            표기 모드
-          </div>
-          <div className="speed-presets">
-            {(
-              [
-                ['both', '탭+오선보'],
-                ['tab', '탭만'],
-                ['score', '오선보만'],
-              ] as const
-            ).map(([mode, label]) => (
-              <button
-                key={mode}
-                className={`chip ${notationMode === mode ? 'on' : ''}`}
-                onClick={() => changeNotationMode(mode)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="panel-title" style={{ marginTop: 12 }}>
-            마스터 볼륨: {masterVolume}%
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={masterVolume}
-            onChange={(e) => changeMasterVolume(Number(e.target.value))}
-            style={{ width: '100%', accentColor: 'var(--green)' }}
-          />
-          <div className="panel-title" style={{ marginTop: 12 }}>
-            다운로드
-          </div>
-          <div className="speed-presets">
-            <button className="chip" onClick={downloadMidi}>
-              MIDI
-            </button>
-            <button className="chip" onClick={downloadGp}>
-              Guitar Pro (.gp)
-            </button>
-          </div>
-        </div>
-      )}
 
       {editMode && (
         <div className="editor-strip">
@@ -1493,90 +1522,12 @@ export default function SongPage() {
           {formatTime(position.current)} / {formatTime(position.end)}
         </div>
         <button
-          className={`pb-btn ${panel === 'speed' ? 'on' : ''}`}
-          onClick={() => togglePanel('speed')}
-          title="속도 (S)"
+          className="pb-btn"
+          onClick={() => openSideTab('play')}
+          title="재생 설정 — 속도/루프/피치 (S)"
         >
           <span className="pb-icon">🏃</span>
-          <span>{speed}% 속도</span>
-        </button>
-        <button className={`pb-btn ${loop ? 'on' : ''}`} onClick={toggleLoop} title="루프 (L)">
-          <span className="pb-icon">↻</span>
-          <span>루프</span>
-        </button>
-        <button
-          className={`pb-btn ${active?.solo ? 'on' : ''}`}
-          onClick={() => toggleSolo(activeTrack)}
-          disabled={isOriginal}
-          title={isOriginal ? '원본 오디오에서는 지원되지 않습니다' : '솔로 (Alt+M)'}
-        >
-          <span className="pb-icon">🎧</span>
-          <span>솔로</span>
-        </button>
-        <button
-          className={`pb-btn ${active?.mute ? 'on' : ''}`}
-          onClick={() => toggleMute(activeTrack)}
-          disabled={isOriginal}
-          title={isOriginal ? '원본 오디오에서는 지원되지 않습니다' : '뮤트 (M)'}
-        >
-          <span className="pb-icon">🔇</span>
-          <span>뮤트</span>
-        </button>
-        <button
-          className={`pb-btn ${countIn ? 'on' : ''}`}
-          onClick={toggleCountIn}
-          disabled={isOriginal}
-          title={isOriginal ? '원본 오디오에서는 지원되지 않습니다' : '카운트인 (C)'}
-        >
-          <span className="pb-icon">③</span>
-          <span>카운트인</span>
-        </button>
-        <button
-          className={`pb-btn ${metronome ? 'on' : ''}`}
-          onClick={toggleMetronome}
-          disabled={isOriginal}
-          title={isOriginal ? '원본 오디오에서는 지원되지 않습니다' : '메트로놈 (N)'}
-        >
-          <span className="pb-icon">🎵</span>
-          <span>메트로놈</span>
-        </button>
-        <button
-          className={`pb-btn ${showFretboard ? 'on' : ''}`}
-          onClick={() => setShowFretboard((v) => !v)}
-          title="지판 (F)"
-        >
-          <span className="pb-icon">🎸</span>
-          <span>지판</span>
-        </button>
-        <button
-          className={`pb-btn ${pitch !== 0 || panel === 'pitch' ? 'on' : ''}`}
-          onClick={() => togglePanel('pitch')}
-          disabled={isOriginal}
-          title={isOriginal ? '원본 오디오에서는 지원되지 않습니다 (신스 전용)' : '피치 시프트 (R)'}
-        >
-          <span className="pb-icon">🎚</span>
-          <span>{pitch !== 0 ? `피치 ${pitch > 0 ? '+' : ''}${pitch}` : '피치'}</span>
-        </button>
-        <button
-          className={`pb-btn ${syncOffset !== 0 || syncScale !== 100 || panel === 'sync' ? 'on' : ''}`}
-          onClick={() => togglePanel('sync')}
-          disabled={!isOriginal}
-          title={isOriginal ? '원본 오디오 싱크 조정' : '원본 오디오 모드에서 사용 가능'}
-        >
-          <span className="pb-icon">⇄</span>
-          <span>싱크</span>
-        </button>
-        <button className="pb-btn" onClick={downloadMidi} title="MIDI 다운로드">
-          <span className="pb-icon">⬇</span>
-          <span>다운로드</span>
-        </button>
-        <button
-          className={`pb-btn ${panel === 'more' ? 'on' : ''}`}
-          onClick={() => togglePanel('more')}
-          title="더보기"
-        >
-          <span className="pb-icon">⋮</span>
-          <span>더보기</span>
+          <span>{speed}%</span>
         </button>
         <button
           className={`pb-btn ${editMode ? 'on' : ''}`}

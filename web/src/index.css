@@ -239,6 +239,46 @@ body {
   margin-bottom: 4px;
 }
 
+.side-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.side-tab {
+  flex: 1;
+  padding: 7px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.side-tab.on {
+  background: var(--green-soft);
+  border-color: var(--green);
+  color: var(--green-dark);
+}
+
+.side-panel .pitch-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.side-panel .sync-row {
+  margin-top: 8px;
+}
+
+.side-panel .sync-row input {
+  width: 100%;
+  accent-color: var(--green);
+}
+
 .side-section + .side-section {
   margin-top: 16px;
   padding-top: 12px;
@@ -266,12 +306,7 @@ body {
 
 @media (max-width: 900px) {
   .side-panel {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: calc(76px + var(--fb-h, 0px));
-    z-index: 25;
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+    width: 240px;
   }
 }
 

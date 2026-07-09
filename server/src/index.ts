@@ -338,14 +338,24 @@ function drumsToBars(events: DrumEvent[], bpm: number): string[] | null {
   }
   if (bySlot.size < 4) return null
   const totalBars = Math.min(MAX_BARS, Math.ceil((lastSlot + 1) / SLOTS_PER_BAR))
+  // 타격 길이 = 다음 이벤트까지, 빈 구간은 쉼표를 병합 — 16분쉼표 도배 방지 (실제 악보 표기 관행)
+  const slots = [...bySlot.keys()].sort((a, b) => a - b)
   const bars: string[] = []
+  let cursor = 0
   for (let bar = 0; bar < totalBars; bar++) {
+    const barEnd = (bar + 1) * SLOTS_PER_BAR
     const tokens: string[] = []
-    for (let s = bar * SLOTS_PER_BAR; s < (bar + 1) * SLOTS_PER_BAR; s++) {
-      const hits = bySlot.get(s)
-      if (!hits || hits.size === 0) tokens.push(':16 r')
-      else if (hits.size === 1) tokens.push(`:16 ${[...hits][0]}`)
-      else tokens.push(`:16 (${[...hits].join(' ')})`)
+    while (cursor < barEnd) {
+      const hits = bySlot.get(cursor)
+      const nextEventSlot = slots.find((s) => s > cursor) ?? Infinity
+      const dur = fitDur(Math.min(nextEventSlot, barEnd) - cursor)
+      if (hits && hits.size > 0) {
+        const arr = [...hits]
+        tokens.push(arr.length === 1 ? `${DUR[dur]} ${arr[0]}` : `${DUR[dur]} (${arr.join(' ')})`)
+      } else {
+        tokens.push(`${DUR[dur]} r`)
+      }
+      cursor += dur
     }
     bars.push(tokens.join(' '))
   }
