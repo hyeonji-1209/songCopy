@@ -238,6 +238,64 @@ def extract_lyrics_fw(path):
         return ""
 
 
+def classify_timbres(stems):
+    """PANNs(AudioSet 태깅)로 스템을 '듣고' 음색 판별 — 서버가 트랙 이름/GM 프로그램 결정.
+
+    guitar: acoustic | electric | distortion
+    other:  synth | strings | organ | brass | choir | flute
+    """
+    try:
+        import librosa
+        import numpy as np
+        from panns_inference import AudioTagging, labels
+
+        at = AudioTagging(checkpoint_path=None, device="cpu")
+
+        def top_labels(path, topk=12):
+            y, _ = librosa.load(path, sr=32000, mono=True, duration=90, offset=10)
+            if len(y) < 32000:
+                y, _ = librosa.load(path, sr=32000, mono=True, duration=90)
+            if len(y) < 32000:
+                return []
+            clip, _ = at.inference(y[None, :])
+            idx = np.argsort(clip[0])[::-1][:topk]
+            return [(labels[i].lower(), float(clip[0][i])) for i in idx]
+
+        out = {}
+        if "guitar" in stems:
+            score = {"acoustic": 0.0, "electric": 0.0, "distortion": 0.0}
+            for name, s in top_labels(stems["guitar"]):
+                if "distortion" in name or "heavy metal" in name:
+                    score["distortion"] += s
+                elif "electric guitar" in name:
+                    score["electric"] += s
+                elif "acoustic guitar" in name:
+                    score["acoustic"] += s
+            best = max(score, key=lambda k: score[k])
+            if score[best] > 0.03:
+                out["guitar"] = best
+        if "other" in stems:
+            fam = {k: 0.0 for k in ("strings", "organ", "brass", "choir", "flute", "synth")}
+            for name, s in top_labels(stems["other"]):
+                if any(w in name for w in ("violin", "cello", "string", "orchestra", "harp")):
+                    fam["strings"] += s
+                elif "organ" in name:
+                    fam["organ"] += s
+                elif any(w in name for w in ("brass", "trumpet", "trombone", "horn", "saxophone")):
+                    fam["brass"] += s
+                elif any(w in name for w in ("choir", "chant", "singing")):
+                    fam["choir"] += s
+                elif "flute" in name:
+                    fam["flute"] += s
+                elif "synth" in name or "electronic" in name:
+                    fam["synth"] += s
+            best = max(fam, key=lambda k: fam[k])
+            out["other"] = best if fam[best] > 0.05 else "synth"
+        return out
+    except Exception:
+        return {}
+
+
 def stem_has_content(path):
     import librosa
     import numpy as np
@@ -271,7 +329,13 @@ def main() -> None:
     sensitivity = sys.argv[2] if len(sys.argv) > 2 else "standard"
 
     buf = io.StringIO()
-    out = {"bpm": None, "lyrics": "", "engine": "v2", "tracks": {k: [] for k in (*MELODIC_STEMS, "drums")}}
+    out = {
+        "bpm": None,
+        "lyrics": "",
+        "engine": "v2",
+        "timbres": {},
+        "tracks": {k: [] for k in (*MELODIC_STEMS, "drums")},
+    }
     tmpdir = tempfile.mkdtemp(prefix="songcopy-v2-")
     try:
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
@@ -282,6 +346,7 @@ def main() -> None:
             out["bpm"] = grid.bpm
 
             stems = separate(audio, tmpdir)
+            out["timbres"] = classify_timbres(stems)
 
             for name in MELODIC_STEMS:
                 path = stems.get(name)

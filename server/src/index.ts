@@ -440,6 +440,17 @@ function lyricsToTexLine(lyrics: string, bpm: number, beatSlots: number[]): stri
   return chunks.slice(0, end).join(' ')
 }
 
+// PANNs 음색 판별 결과 → 트랙 이름/GM 프로그램
+const GUITAR_PROGRAM: Record<string, number> = { acoustic: 25, electric: 27, distortion: 30 }
+const OTHER_FAMILY: Record<string, { name: string; lead: number; pad: number }> = {
+  synth: { name: '신스', lead: 81, pad: 89 },
+  strings: { name: '스트링', lead: 48, pad: 49 },
+  organ: { name: '오르간', lead: 16, pad: 16 },
+  brass: { name: '브라스', lead: 61, pad: 61 },
+  choir: { name: '콰이어', lead: 52, pad: 52 },
+  flute: { name: '플루트', lead: 73, pad: 73 },
+}
+
 // 감지된 악기만 트랙으로 생성 (6스템: vocals/guitar/piano/other/bass/drums)
 function tracksToAlphaTex(
   tracks: TranscribeTracks,
@@ -447,6 +458,7 @@ function tracksToAlphaTex(
   title: string,
   artist: string,
   lyrics?: string,
+  timbres?: { guitar?: string; other?: string },
 ): string {
   const parts: string[] = []
   const ks = detectKeySignature(tracks)
@@ -478,7 +490,14 @@ function tracksToAlphaTex(
       )
     }
   }
-  add(tracks.guitar, (b) => `\\track "기타"\n\\staff {score tabs}\n\\instrument 25\n${b.join(' |\n')}`, GUITAR_TUNING)
+  const gProg = GUITAR_PROGRAM[timbres?.guitar ?? ''] ?? 25
+  const gName =
+    timbres?.guitar === 'distortion' ? '기타 (디스토션)' : timbres?.guitar === 'electric' ? '기타 (일렉)' : '기타'
+  add(
+    tracks.guitar,
+    (b) => `\\track "${gName}"\n\\staff {score tabs}\n\\instrument ${gProg}\n${b.join(' |\n')}`,
+    GUITAR_TUNING,
+  )
   // 피아노는 큰보표: 가운데 도(C4) 기준 오른손(높은음자리)/왼손(낮은음자리) 2단.
   // 한 손 분량이 사실상 없으면 기존처럼 단일 단으로.
   if (tracks.piano && tracks.piano.length >= 8) {
@@ -497,8 +516,10 @@ function tracksToAlphaTex(
       add(tracks.piano, (b) => `\\track "키보드 (피아노)"\n\\staff {score}\n\\instrument 0\n${b.join(' |\n')}`, null)
     }
   }
-  // 신스('other' 스템): 화음(패드)과 단선율(리드)이 섞여 있으면 두 신스 트랙으로 분리
+  // 'other' 스템: PANNs가 판별한 계열(신스/스트링/오르간/브라스 등)의 음색을 쓰고,
+  // 화음(패드)과 단선율(리드)이 섞여 있으면 두 트랙으로 분리
   if (tracks.other && tracks.other.length >= 8) {
+    const fam = OTHER_FAMILY[timbres?.other ?? ''] ?? OTHER_FAMILY.synth
     const grid = 15 / bpm
     const slotOf = (n: NoteEvent) => n.qs ?? Math.round(n.start / grid)
     const countBySlot = new Map<number, number>()
@@ -508,10 +529,14 @@ function tracksToAlphaTex(
     const padBars = pad.length >= 8 ? withKs(notesToBars(pad, bpm, null, undefined, flats)) : null
     const leadBars = lead.length >= 8 ? withKs(notesToBars(lead, bpm, null, undefined, flats)) : null
     if (padBars && leadBars) {
-      parts.push(`\\track "신스 리드"\n\\staff {score}\n\\instrument 81\n${leadBars.join(' |\n')}`)
-      parts.push(`\\track "신스 패드"\n\\staff {score}\n\\instrument 89\n${padBars.join(' |\n')}`)
+      parts.push(`\\track "${fam.name} 리드"\n\\staff {score}\n\\instrument ${fam.lead}\n${leadBars.join(' |\n')}`)
+      parts.push(`\\track "${fam.name} 패드"\n\\staff {score}\n\\instrument ${fam.pad}\n${padBars.join(' |\n')}`)
     } else {
-      add(tracks.other, (b) => `\\track "신스/기타 악기"\n\\staff {score}\n\\instrument 81\n${b.join(' |\n')}`, null)
+      add(
+        tracks.other,
+        (b) => `\\track "${fam.name}"\n\\staff {score}\n\\instrument ${fam.lead}\n${b.join(' |\n')}`,
+        null,
+      )
     }
   }
   add(tracks.bass, (b) => `\\track "베이스"\n\\staff {tabs}\n\\instrument 33\n\\tuning g2 d2 a1 e1\n${b.join(' |\n')}`, BASS_TUNING)
@@ -726,6 +751,7 @@ const server = http.createServer(async (req, res) => {
           tracks?: TranscribeTracks
           bpm?: number | null
           lyrics?: string
+          timbres?: { guitar?: string; other?: string }
           error?: string
         }
         const tracks = result.tracks ?? {}
@@ -742,7 +768,7 @@ const server = http.createServer(async (req, res) => {
         const rawBpm = body.bpm && body.bpm > 0 ? body.bpm : (result.bpm ?? 120)
         const bpm = Math.min(220, Math.max(40, Math.round(rawBpm)))
         const artist = body.artist?.trim() || 'AI 채보'
-        const tex = tracksToAlphaTex(tracks, bpm, title, artist, result.lyrics)
+        const tex = tracksToAlphaTex(tracks, bpm, title, artist, result.lyrics, result.timbres)
         const instruments = [
           ...(tracks.vocals?.length ? ['보컬'] : []),
           ...(tracks.guitar?.length ? ['기타'] : []),
