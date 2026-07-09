@@ -471,8 +471,10 @@ function tracksToAlphaTex(
     const bars = withKs(notesToBars(tracks.vocals, bpm, GUITAR_TUNING, beatSlots))
     if (bars) {
       const lyr = lyrics ? lyricsToTexLine(lyrics, bpm, beatSlots) : null
+      // \instrument 53 = Voice Oohs — 지정 없으면 기본 기타 소리가 나서 기타 트랙과 구분이 안 됨.
+      // \instrument를 지정하면 기본 기타 튜닝이 적용되지 않으므로 \tuning 명시 필수(프렛.현 표기용)
       parts.push(
-        `\\track "멜로디 (보컬)"\n\\staff {score tabs}\n${lyr ? `\\lyrics 0 "${lyr}"\n` : ''}${bars.join(' |\n')}`,
+        `\\track "멜로디 (보컬)"\n\\staff {score tabs}\n\\tuning e4 b3 g3 d3 a2 e2\n\\instrument 53\n${lyr ? `\\lyrics 0 "${lyr}"\n` : ''}${bars.join(' |\n')}`,
       )
     }
   }
