@@ -19,6 +19,7 @@ import { setTheme, useTheme } from '../lib/theme'
 import { useUpload } from '../lib/uploadStore'
 import Comments from '../components/Comments'
 import Fretboard, { type ActiveNote } from '../components/Fretboard'
+import Icon, { trackIconName } from '../components/Icon'
 import OpenFileButton from '../components/OpenFileButton'
 
 interface TrackInfo {
@@ -28,15 +29,6 @@ interface TrackInfo {
   solo: boolean
   visible: boolean
   volume: number
-}
-
-function trackIcon(name: string): string {
-  if (name.includes('드럼')) return '🥁'
-  if (name.includes('키보드') || name.includes('피아노')) return '🎹'
-  if (name.includes('브라스') || name.includes('트럼펫')) return '🎺'
-  if (name.includes('베이스')) return '🎸'
-  if (name.includes('보컬')) return '🎤'
-  return '🎸'
 }
 
 const SPEED_PRESETS = [15, 25, 50, 75, 100, 125, 150, 175]
@@ -80,6 +72,8 @@ export default function SongPage() {
     return saved !== null ? saved !== '0' : window.innerWidth > 900
   })
   const [sideTab, setSideTab] = useState<'mixer' | 'play' | 'settings'>('mixer')
+  const [zoom, setZoom] = useState(110) // 악보 배율 %
+  const [viewMode, setViewMode] = useState<'vertical' | 'horizontal'>('vertical')
   const upload = useUpload()
   const favorites = useFavorites()
   const theme = useTheme()
@@ -98,7 +92,8 @@ export default function SongPage() {
   const [countIn, setCountIn] = useState(false)
   const [tracks, setTracks] = useState<TrackInfo[]>([])
   const [activeTrack, setActiveTrack] = useState(0)
-  const [fourBars, setFourBars] = useState(true) // 한 줄에 4마디가 기본
+  // 자동 레이아웃이 기본: 밀도 높은 곡(AI 채보)을 4마디로 강제하면 음표가 겹친다
+  const [fourBars, setFourBars] = useState(false)
   const [dynamics, setDynamics] = useState(true)
   const [notationMode, setNotationMode] = useState<'both' | 'tab' | 'score'>('both')
   const [position, setPosition] = useState({ current: 0, end: 0 })
@@ -165,7 +160,6 @@ export default function SongPage() {
       display: {
         layoutMode: alphaTab.LayoutMode.Page,
         scale: 1.1,
-        barsPerRow: 4, // 한 줄에 4마디 기본 (설정에서 해제 가능)
         padding: [40, 40], // 악보와 테두리 사이 여유
         systemPaddingTop: 22, // 단(시스템) 사이 간격 — 빽빽함 완화
         systemPaddingBottom: 22,
@@ -293,8 +287,10 @@ export default function SongPage() {
       setLoop(false)
       setMetronome(false)
       setCountIn(false)
-      setFourBars(true) // 초기 설정 barsPerRow=4와 일치해야 함
+      setFourBars(false)
       setDynamics(true)
+      setZoom(110)
+      setViewMode('vertical')
       setPosition({ current: 0, end: 0 })
       setScoreMeta({ title: '', artist: '' })
       setActiveNotes([])
@@ -720,6 +716,35 @@ export default function SongPage() {
     })
   }
 
+  const changeZoom = (delta: number) => {
+    const api = apiRef.current
+    if (!api) return
+    setZoom((prev) => {
+      const v = Math.min(200, Math.max(50, prev + delta))
+      api.settings.display.scale = v / 100
+      api.updateSettings()
+      api.render()
+      return v
+    })
+  }
+
+  // 세로 스크롤(페이지) ↔ 가로 넘김(수평 스트립)
+  const changeViewMode = (mode: 'vertical' | 'horizontal') => {
+    const api = apiRef.current
+    if (!api) return
+    setViewMode(mode)
+    api.settings.display.layoutMode =
+      mode === 'horizontal' ? alphaTab.LayoutMode.Horizontal : alphaTab.LayoutMode.Page
+    api.updateSettings()
+    api.render()
+  }
+
+  const flipPage = (dir: 1 | -1) => {
+    const vp = viewportRef.current
+    if (!vp) return
+    vp.scrollBy({ left: dir * vp.clientWidth * 0.85, behavior: 'smooth' })
+  }
+
   const changeNotationMode = (mode: 'both' | 'tab' | 'score') => {
     const api = apiRef.current
     if (!api) return
@@ -1027,7 +1052,9 @@ export default function SongPage() {
               </div>
               {tracks.map((t) => (
                 <div key={t.index} className={`track-row ${t.index === activeTrack ? 'active' : ''}`}>
-                  <span className="track-icon">{trackIcon(t.name)}</span>
+                  <span className="track-icon">
+                    <Icon name={trackIconName(t.name)} />
+                  </span>
                   <button
                     className="track-name"
                     onClick={() => selectTrack(t.index)}
@@ -1056,10 +1083,10 @@ export default function SongPage() {
                     onClick={() => toggleMultiTrack(t.index)}
                     title="악보에 표시 (여러 개 켜면 동시 보기)"
                   >
-                    👁
+                    <Icon name="eye" />
                   </button>
                   <button className="chip" onClick={() => printTrack(t.index)} title="이 악기 악보만 인쇄">
-                    🖨
+                    <Icon name="print" />
                   </button>
                   <input
                     className="track-vol side-vol"
@@ -1075,18 +1102,20 @@ export default function SongPage() {
               ))}
               {song?.lyrics && (
                 <div className="track-row">
-                  <span className="track-icon">🎤</span>
+                  <span className="track-icon">
+                    <Icon name="mic" />
+                  </span>
                   <span className="track-name">가사</span>
                   <button
                     className={`chip ${showLyrics ? 'on' : ''}`}
                     onClick={() => setShowLyrics((v) => !v)}
                     title="가사 표시/숨김"
                   >
-                    👁
+                    <Icon name="eye" />
                   </button>
                 </div>
               )}
-              <p className="panel-note">S 솔로 · M 뮤트 · 👁 악보 표시 · 🖨 인쇄 · 슬라이더 볼륨</p>
+              <p className="panel-note">S 솔로 · M 뮤트 · 눈 = 악보 표시 · 프린터 = 인쇄 · 슬라이더 = 볼륨</p>
             </div>
             )}
             {sideTab === 'play' && (
@@ -1119,7 +1148,7 @@ export default function SongPage() {
                   <span className="panel-title">재생 보조</span>
                   <div className="speed-presets">
                     <button className={`chip ${loop ? 'on' : ''}`} onClick={toggleLoop} title="루프 (L)">
-                      ↻ 루프
+                      <Icon name="loop" /> 루프
                     </button>
                     <button
                       className={`chip ${countIn ? 'on' : ''}`}
@@ -1127,7 +1156,7 @@ export default function SongPage() {
                       disabled={isOriginal}
                       title="카운트인 (C)"
                     >
-                      ③ 카운트인
+                      카운트인
                     </button>
                     <button
                       className={`chip ${metronome ? 'on' : ''}`}
@@ -1135,14 +1164,14 @@ export default function SongPage() {
                       disabled={isOriginal}
                       title="메트로놈 (N)"
                     >
-                      🎵 메트로놈
+                      <Icon name="metronome" /> 메트로놈
                     </button>
                     <button
                       className={`chip ${showFretboard ? 'on' : ''}`}
                       onClick={() => setShowFretboard((v) => !v)}
                       title="지판 (F)"
                     >
-                      🎸 지판
+                      <Icon name="fretboard" /> 지판
                     </button>
                   </div>
                 </div>
@@ -1241,18 +1270,35 @@ export default function SongPage() {
                   </button>
                 ))}
               </div>
+              <span className="panel-title" style={{ display: 'block', marginTop: 12 }}>
+                보기 방식
+              </span>
+              <div className="speed-presets">
+                <button
+                  className={`chip ${viewMode === 'vertical' ? 'on' : ''}`}
+                  onClick={() => changeViewMode('vertical')}
+                >
+                  세로 스크롤
+                </button>
+                <button
+                  className={`chip ${viewMode === 'horizontal' ? 'on' : ''}`}
+                  onClick={() => changeViewMode('horizontal')}
+                >
+                  가로 넘김
+                </button>
+              </div>
             </div>
             <div className="side-section">
               <span className="panel-title">내보내기</span>
               <div className="speed-presets">
                 <button className="chip" onClick={print}>
-                  🖨 인쇄
+                  <Icon name="print" /> 인쇄
                 </button>
                 <button className="chip" onClick={downloadMidi}>
-                  MIDI
+                  <Icon name="download" /> MIDI
                 </button>
                 <button className="chip" onClick={downloadGp}>
-                  .gp
+                  <Icon name="download" /> .gp
                 </button>
               </div>
             </div>
@@ -1277,6 +1323,7 @@ export default function SongPage() {
             )}
           </aside>
         )}
+        <div className="sheet-area">
         <div className="sheet-viewport" ref={viewportRef}>
         <header className="song-head">
           <h1 className="song-title">{title} 탭</h1>
@@ -1366,6 +1413,26 @@ export default function SongPage() {
           </details>
         )}
         {song && <Comments slug={song.slug} />}
+        </div>
+        <div className="zoom-ctl">
+          <button onClick={() => changeZoom(-10)} title="축소" disabled={zoom <= 50}>
+            −
+          </button>
+          <span>{zoom}%</span>
+          <button onClick={() => changeZoom(10)} title="확대" disabled={zoom >= 200}>
+            +
+          </button>
+        </div>
+        {viewMode === 'horizontal' && (
+          <>
+            <button className="page-flip left" onClick={() => flipPage(-1)} title="이전 페이지">
+              ‹
+            </button>
+            <button className="page-flip right" onClick={() => flipPage(1)} title="다음 페이지">
+              ›
+            </button>
+          </>
+        )}
         </div>
       </div>
 
@@ -1526,7 +1593,9 @@ export default function SongPage() {
           onClick={() => openSideTab('play')}
           title="재생 설정 — 속도/루프/피치 (S)"
         >
-          <span className="pb-icon">🏃</span>
+          <span className="pb-icon">
+            <Icon name="speed" size={18} />
+          </span>
           <span>{speed}%</span>
         </button>
         <button
@@ -1534,7 +1603,9 @@ export default function SongPage() {
           onClick={toggleEditMode}
           title="편집기 (E)"
         >
-          <span className="pb-icon">✏️</span>
+          <span className="pb-icon">
+            <Icon name="pencil" size={18} />
+          </span>
           <span>편집기</span>
         </button>
       </footer>

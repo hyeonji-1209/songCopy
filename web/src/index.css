@@ -214,12 +214,102 @@ body {
   flex: 1;
   display: flex;
   min-height: 0;
+  position: relative;
+}
+
+.sheet-area {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
 }
 
 .sheet-viewport {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
+  overflow-x: auto; /* 가로 넘김 모드 */
   padding: 0 24px 40px;
+}
+
+/* ── 악보 확대/축소 & 페이지 넘김 ──────────── */
+.zoom-ctl {
+  position: absolute;
+  right: 20px;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bar-bg);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 3px 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  z-index: 15;
+}
+
+.zoom-ctl button {
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: none;
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--ink);
+  border-radius: 50%;
+}
+
+.zoom-ctl button:hover:not(:disabled) {
+  background: var(--green-soft);
+}
+
+.zoom-ctl button:disabled {
+  opacity: 0.3;
+}
+
+.zoom-ctl span {
+  font-size: 12px;
+  min-width: 42px;
+  text-align: center;
+  color: var(--ink-soft);
+}
+
+.page-flip {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 64px;
+  border: 1px solid var(--border);
+  background: var(--bar-bg);
+  font-size: 26px;
+  color: var(--ink);
+  cursor: pointer;
+  z-index: 15;
+  opacity: 0.85;
+}
+
+.page-flip:hover {
+  opacity: 1;
+  background: var(--green-soft);
+}
+
+.page-flip.left {
+  left: 0;
+  border-radius: 0 10px 10px 0;
+  border-left: none;
+}
+
+.page-flip.right {
+  right: 0;
+  border-radius: 10px 0 0 10px;
+  border-right: none;
+}
+
+.track-icon .icon,
+.chip .icon {
+  vertical-align: -3px;
 }
 
 /* ── 상시 사이드바 (믹서/표기/내보내기) ─────── */
