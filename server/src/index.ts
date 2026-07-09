@@ -357,6 +357,47 @@ interface TranscribeTracks {
   drums?: DrumEvent[]
 }
 
+// 조성 감지: Krumhansl-Schmuckler 프로파일과 피치 클래스 히스토그램의 상관으로
+// 장/단조 24개 중 최적 → 조표(alphaTex \ks 이름). 조표가 있어야 임시표가 조성 기준(♭/♯)으로 표기된다.
+const KS_NAMES: Record<number, string> = {
+  '-7': 'cb', '-6': 'gb', '-5': 'db', '-4': 'ab', '-3': 'eb', '-2': 'bb', '-1': 'f',
+  '0': 'c', '1': 'g', '2': 'd', '3': 'a', '4': 'e', '5': 'b', '6': 'f#',
+}
+const PC_FIFTHS = [0, -5, 2, -3, 4, -1, 6, 1, -4, 3, -2, 5] // 피치클래스 → 5도권 위치
+function detectKeySignature(tracks: TranscribeTracks): string | null {
+  const MAJOR = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
+  const MINOR = [6.33, 2.68, 3.52, 5.38, 2.6, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
+  const hist = new Array(12).fill(0) as number[]
+  for (const k of ['vocals', 'guitar', 'piano', 'other', 'bass'] as const) {
+    for (const n of tracks[k] ?? []) hist[n.midi % 12] += Math.max(0.1, n.end - n.start)
+  }
+  const total = hist.reduce((a, b) => a + b, 0)
+  if (total === 0) return null
+  const corr = (profile: number[], tonic: number) => {
+    const mh = total / 12
+    const mp = profile.reduce((a, b) => a + b, 0) / 12
+    let num = 0
+    let dh = 0
+    let dp = 0
+    for (let i = 0; i < 12; i++) {
+      const h = hist[(tonic + i) % 12] - mh
+      const p = profile[i] - mp
+      num += h * p
+      dh += h * h
+      dp += p * p
+    }
+    return num / (Math.sqrt(dh * dp) || 1)
+  }
+  let best = { score: -Infinity, fifths: 0 }
+  for (let t = 0; t < 12; t++) {
+    const cM = corr(MAJOR, t)
+    if (cM > best.score) best = { score: cM, fifths: PC_FIFTHS[t] }
+    const cm = corr(MINOR, t)
+    if (cm > best.score) best = { score: cm, fifths: PC_FIFTHS[(t + 3) % 12] } // 나란한조 장조 조표
+  }
+  return KS_NAMES[best.fifths] ?? null
+}
+
 /** Whisper 가사([m:ss] 줄)를 보컬 비트 위치에 맞춰 alphaTex \lyrics 한 줄로.
  * `_` 청크는 alphaTab이 빈 칸으로 렌더 — 가사 없는 비트를 건너뛰는 필러. */
 function lyricsToTexLine(lyrics: string, bpm: number, beatSlots: number[]): string | null {
@@ -394,20 +435,25 @@ function tracksToAlphaTex(
   lyrics?: string,
 ): string {
   const parts: string[] = []
+  const ks = detectKeySignature(tracks)
+  const withKs = (bars: string[] | null) => {
+    if (bars && bars.length && ks && ks !== 'c') bars[0] = `\\ks ${ks} ${bars[0]}`
+    return bars
+  }
   const add = (
     notes: NoteEvent[] | undefined,
     build: (bars: string[]) => string,
     tuning: number[] | null,
   ) => {
     if (!notes || notes.length < 8) return
-    const bars = notesToBars(notes, bpm, tuning)
+    const bars = withKs(notesToBars(notes, bpm, tuning))
     if (bars) parts.push(build(bars))
   }
 
   // 보컬: 가사가 있으면 음표 아래에 타임스탬프 맞춰 배치
   if (tracks.vocals && tracks.vocals.length >= 8) {
     const beatSlots: number[] = []
-    const bars = notesToBars(tracks.vocals, bpm, GUITAR_TUNING, beatSlots)
+    const bars = withKs(notesToBars(tracks.vocals, bpm, GUITAR_TUNING, beatSlots))
     if (bars) {
       const lyr = lyrics ? lyricsToTexLine(lyrics, bpm, beatSlots) : null
       parts.push(
@@ -421,8 +467,8 @@ function tracksToAlphaTex(
   if (tracks.piano && tracks.piano.length >= 8) {
     const rh = tracks.piano.filter((n) => n.midi >= 60)
     const lh = tracks.piano.filter((n) => n.midi < 60)
-    const rhBars = rh.length >= 4 ? notesToBars(rh, bpm, null) : null
-    const lhBars = lh.length >= 4 ? notesToBars(lh, bpm, null) : null
+    const rhBars = rh.length >= 4 ? withKs(notesToBars(rh, bpm, null)) : null
+    const lhBars = lh.length >= 4 ? withKs(notesToBars(lh, bpm, null)) : null
     if (rhBars && lhBars) {
       const len = Math.max(rhBars.length, lhBars.length)
       while (rhBars.length < len) rhBars.push(':1 r')
