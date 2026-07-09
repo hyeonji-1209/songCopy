@@ -497,7 +497,23 @@ function tracksToAlphaTex(
       add(tracks.piano, (b) => `\\track "키보드 (피아노)"\n\\staff {score}\n\\instrument 0\n${b.join(' |\n')}`, null)
     }
   }
-  add(tracks.other, (b) => `\\track "신스/기타 악기"\n\\staff {score}\n\\instrument 81\n${b.join(' |\n')}`, null)
+  // 신스('other' 스템): 화음(패드)과 단선율(리드)이 섞여 있으면 두 신스 트랙으로 분리
+  if (tracks.other && tracks.other.length >= 8) {
+    const grid = 15 / bpm
+    const slotOf = (n: NoteEvent) => n.qs ?? Math.round(n.start / grid)
+    const countBySlot = new Map<number, number>()
+    for (const n of tracks.other) countBySlot.set(slotOf(n), (countBySlot.get(slotOf(n)) ?? 0) + 1)
+    const pad = tracks.other.filter((n) => (countBySlot.get(slotOf(n)) ?? 0) >= 2)
+    const lead = tracks.other.filter((n) => (countBySlot.get(slotOf(n)) ?? 0) < 2)
+    const padBars = pad.length >= 8 ? withKs(notesToBars(pad, bpm, null, undefined, flats)) : null
+    const leadBars = lead.length >= 8 ? withKs(notesToBars(lead, bpm, null, undefined, flats)) : null
+    if (padBars && leadBars) {
+      parts.push(`\\track "신스 리드"\n\\staff {score}\n\\instrument 81\n${leadBars.join(' |\n')}`)
+      parts.push(`\\track "신스 패드"\n\\staff {score}\n\\instrument 89\n${padBars.join(' |\n')}`)
+    } else {
+      add(tracks.other, (b) => `\\track "신스/기타 악기"\n\\staff {score}\n\\instrument 81\n${b.join(' |\n')}`, null)
+    }
+  }
   add(tracks.bass, (b) => `\\track "베이스"\n\\staff {tabs}\n\\instrument 33\n\\tuning g2 d2 a1 e1\n${b.join(' |\n')}`, BASS_TUNING)
 
   const drums = tracks.drums ? drumsToBars(tracks.drums, bpm) : null
