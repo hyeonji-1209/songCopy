@@ -595,8 +595,143 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
 }
 
-// AI 채보 동시 실행 잠금 (ML 파이프라인은 무거워서 한 번에 하나만)
-let transcribeBusy = false
+// ── AI 채보 비동기 잡 큐 ──
+// 제출 즉시 202 + jobId 반환, 순차 처리(ML 파이프라인은 무거워서 한 번에 하나만),
+// 파이썬이 stderr로 보내는 "PROGRESS <pct> <stage>" 줄로 진행률 갱신, 클라이언트는 폴링.
+interface TranscribeJob {
+  id: string
+  userId: number
+  title: string
+  artist: string
+  bpm: number | null
+  sensitivity: string
+  tmp: string
+  status: 'queued' | 'running' | 'done' | 'failed'
+  stage: string
+  progress: number
+  slug: string | null
+  error: string | null
+  createdAt: number
+}
+
+const transcribeJobs = new Map<string, TranscribeJob>()
+let jobChain: Promise<void> = Promise.resolve()
+
+async function runTranscribeJob(job: TranscribeJob): Promise<void> {
+  // 완료된 잡은 1시간 뒤 정리
+  for (const [id, j] of transcribeJobs) {
+    if ((j.status === 'done' || j.status === 'failed') && Date.now() - j.createdAt > 3_600_000) {
+      transcribeJobs.delete(id)
+    }
+  }
+  job.status = 'running'
+  job.stage = '준비 중'
+  try {
+    // v2(상업 안전 스택) 우선, ML venv 없으면 v1 폴백
+    const base = join(dirname(fileURLToPath(import.meta.url)), '..')
+    const mlPython = join(base, 'ml', '.venv', 'bin', 'python')
+    const useV2 = existsSync(mlPython)
+    const python = useV2 ? mlPython : 'python3'
+    const script = join(base, 'scripts', useV2 ? 'transcribe_v2.py' : 'transcribe.py')
+    const proc = await new Promise<{ status: number | null; stdout: string; stderr: string }>(
+      (resolve) => {
+        // 스레드 상한: 전 코어 풀가동 대신 8스레드 — 발열↓, 속도 손실은 미미
+        const p = spawn(python, [script, job.tmp, job.sensitivity], {
+          env: { ...process.env, OMP_NUM_THREADS: '8', MKL_NUM_THREADS: '8' },
+        })
+        let stdout = ''
+        let stderr = ''
+        p.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
+        p.stderr.on('data', (d: Buffer) => {
+          const text = d.toString()
+          stderr += text
+          // 진행률 줄 파싱: "PROGRESS 45 보컬 채보"
+          for (const line of text.split('\n')) {
+            const pm = /^PROGRESS (\d+) (.+)$/.exec(line.trim())
+            if (pm) {
+              job.progress = Math.min(99, Number(pm[1]))
+              job.stage = pm[2]
+            }
+          }
+        })
+        // 촘촘(고정밀) 모드는 다중 시도 앙상블이라 2~4배 오래 걸림
+        const timer = setTimeout(
+          () => p.kill('SIGKILL'),
+          job.sensitivity === 'dense' ? 1800_000 : 600_000,
+        )
+        p.on('close', (code) => {
+          clearTimeout(timer)
+          resolve({ status: code, stdout, stderr })
+        })
+        p.on('error', () => {
+          clearTimeout(timer)
+          resolve({ status: -1, stdout, stderr: stderr || 'spawn failed' })
+        })
+      },
+    )
+    if (proc.status !== 0) {
+      console.error('transcribe failed:', proc.stderr?.slice(0, 500))
+      throw new Error('AI 채보 실행 실패 (서버 로그 확인)')
+    }
+    const result = JSON.parse(proc.stdout) as {
+      tracks?: TranscribeTracks
+      bpm?: number | null
+      lyrics?: string
+      timbres?: { guitar?: string; other?: string }
+      error?: string
+    }
+    const tracks = result.tracks ?? {}
+    const totalNotes =
+      (tracks.vocals?.length ?? 0) +
+      (tracks.guitar?.length ?? 0) +
+      (tracks.piano?.length ?? 0) +
+      (tracks.other?.length ?? 0) +
+      (tracks.bass?.length ?? 0)
+    if (result.error || (totalNotes === 0 && !(tracks.drums?.length ?? 0))) {
+      throw new Error('오디오에서 노트를 감지하지 못했습니다')
+    }
+    job.stage = '악보 생성'
+    // BPM: 사용자 입력 > 자동 감지 > 120
+    const rawBpm = job.bpm && job.bpm > 0 ? job.bpm : (result.bpm ?? 120)
+    const bpm = Math.min(220, Math.max(40, Math.round(rawBpm)))
+    const tex = tracksToAlphaTex(tracks, bpm, job.title, job.artist, result.lyrics, result.timbres)
+    const instruments = [
+      ...(tracks.vocals?.length ? ['보컬'] : []),
+      ...(tracks.guitar?.length ? ['기타'] : []),
+      ...(tracks.piano?.length ? ['키보드'] : []),
+      ...(tracks.other?.length ? ['신스'] : []),
+      ...(tracks.bass?.length ? ['베이스'] : []),
+      ...(tracks.drums?.length ? ['드럼'] : []),
+    ]
+    const slug = uniqueSlug(job.title, job.artist)
+    insertSong.run(
+      slug,
+      job.title,
+      job.artist,
+      JSON.stringify(instruments.length ? instruments : ['기타']),
+      new Date().toISOString(),
+      tex,
+    )
+    db.prepare('UPDATE songs SET source = ?, lyrics = ? WHERE slug = ?').run(
+      'ai',
+      result.lyrics?.trim() || null,
+      slug,
+    )
+    job.slug = slug
+    job.progress = 100
+    job.stage = '완료'
+    job.status = 'done'
+  } catch (e) {
+    job.status = 'failed'
+    job.error = e instanceof Error ? e.message : String(e)
+  } finally {
+    try {
+      unlinkSync(job.tmp)
+    } catch {
+      /* 무시 */
+    }
+  }
+}
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost')
@@ -707,100 +842,49 @@ const server = http.createServer(async (req, res) => {
       if (audio.length > 15_000_000) return json(res, 413, { error: '오디오는 15MB 이하만 가능합니다' })
       const ext = /^[a-z0-9]{1,5}$/.test(body.ext ?? '') ? body.ext : 'wav'
 
-      // 동시 채보 방지: ML 파이프라인 2개가 겹치면 서로 2배로 느려지고 발열만 커진다
-      if (transcribeBusy) {
-        return json(res, 409, { error: '이미 다른 채보가 진행 중입니다. 끝나면 다시 시도해주세요.' })
+      // 사용자당 활성 잡 1개 (중복 제출 방지)
+      const active = [...transcribeJobs.values()].find(
+        (j) => j.userId === user.id && (j.status === 'queued' || j.status === 'running'),
+      )
+      if (active) {
+        return json(res, 409, { error: '이미 진행 중인 채보가 있습니다.', jobId: active.id })
       }
-      transcribeBusy = true
       const tmp = join(DATA_DIR, `transcribe-${randomUUID()}.${ext}`)
       writeFileSync(tmp, audio)
-      try {
-        // v2(SOTA 스택: BS-Roformer-SW + YourMT3 + ADTOF) 우선, ML venv 없으면 v1 폴백
-        const base = join(dirname(fileURLToPath(import.meta.url)), '..')
-        const mlPython = join(base, 'ml', '.venv', 'bin', 'python')
-        const useV2 = existsSync(mlPython)
-        const python = useV2 ? mlPython : 'python3'
-        const script = join(base, 'scripts', useV2 ? 'transcribe_v2.py' : 'transcribe.py')
-        // 비동기 spawn: 채보(수 분)가 도는 동안에도 서버가 다른 요청을 처리할 수 있어야 한다
-        const proc = await new Promise<{ status: number | null; stdout: string; stderr: string }>(
-          (resolve) => {
-            // 스레드 상한: 전 코어 풀가동 대신 8스레드 — 발열↓, 속도 손실은 미미
-            const p = spawn(python, [script, tmp, sensitivity], {
-              env: { ...process.env, OMP_NUM_THREADS: '8', MKL_NUM_THREADS: '8' },
-            })
-            let stdout = ''
-            let stderr = ''
-            p.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
-            p.stderr.on('data', (d: Buffer) => (stderr += d.toString()))
-            // 촘촘(고정밀) 모드는 다중 시도 앙상블이라 2~4배 오래 걸림
-            const timer = setTimeout(() => p.kill('SIGKILL'), sensitivity === 'dense' ? 1800_000 : 600_000)
-            p.on('close', (code) => {
-              clearTimeout(timer)
-              resolve({ status: code, stdout, stderr })
-            })
-            p.on('error', () => {
-              clearTimeout(timer)
-              resolve({ status: -1, stdout, stderr: stderr || 'spawn failed' })
-            })
-          },
-        )
-        if (proc.status !== 0) {
-          console.error('transcribe failed:', proc.stderr?.slice(0, 500))
-          return json(res, 500, { error: 'AI 채보 실행 실패 (basic-pitch/demucs 설치 확인)' })
-        }
-        const result = JSON.parse(proc.stdout) as {
-          tracks?: TranscribeTracks
-          bpm?: number | null
-          lyrics?: string
-          timbres?: { guitar?: string; other?: string }
-          error?: string
-        }
-        const tracks = result.tracks ?? {}
-        const totalNotes =
-          (tracks.vocals?.length ?? 0) +
-          (tracks.guitar?.length ?? 0) +
-          (tracks.piano?.length ?? 0) +
-          (tracks.other?.length ?? 0) +
-          (tracks.bass?.length ?? 0)
-        if (result.error || (totalNotes === 0 && !(tracks.drums?.length ?? 0))) {
-          return json(res, 422, { error: '오디오에서 노트를 감지하지 못했습니다' })
-        }
-        // BPM: 사용자 입력 > 자동 감지 > 120
-        const rawBpm = body.bpm && body.bpm > 0 ? body.bpm : (result.bpm ?? 120)
-        const bpm = Math.min(220, Math.max(40, Math.round(rawBpm)))
-        const artist = body.artist?.trim() || 'AI 채보'
-        const tex = tracksToAlphaTex(tracks, bpm, title, artist, result.lyrics, result.timbres)
-        const instruments = [
-          ...(tracks.vocals?.length ? ['보컬'] : []),
-          ...(tracks.guitar?.length ? ['기타'] : []),
-          ...(tracks.piano?.length ? ['키보드'] : []),
-          ...(tracks.other?.length ? ['신스'] : []),
-          ...(tracks.bass?.length ? ['베이스'] : []),
-          ...(tracks.drums?.length ? ['드럼'] : []),
-        ]
-        const slug = uniqueSlug(title, artist)
-        insertSong.run(
-          slug,
-          title,
-          artist,
-          JSON.stringify(instruments.length ? instruments : ['기타']),
-          new Date().toISOString(),
-          tex,
-        )
-        db.prepare('UPDATE songs SET source = ?, lyrics = ? WHERE slug = ?').run(
-          'ai',
-          result.lyrics?.trim() || null,
-          slug,
-        )
-        return json(res, 201, { slug, noteCount: totalNotes, bpm, hasLyrics: !!result.lyrics?.trim() })
-      } finally {
-        transcribeBusy = false
-        try {
-          unlinkSync(tmp)
-        } catch {
-          /* 무시 */
-        }
+      const job: TranscribeJob = {
+        id: randomUUID(),
+        userId: user.id,
+        title,
+        artist: body.artist?.trim() || 'AI 채보',
+        bpm: body.bpm && body.bpm > 0 ? body.bpm : null,
+        sensitivity,
+        tmp,
+        status: 'queued',
+        stage: '대기 중',
+        progress: 0,
+        slug: null,
+        error: null,
+        createdAt: Date.now(),
       }
+      transcribeJobs.set(job.id, job)
+      // 순차 큐: ML 파이프라인 2개가 겹치면 서로 2배로 느려지므로 한 번에 하나만
+      jobChain = jobChain.then(() => runTranscribeJob(job)).catch(() => {})
+      return json(res, 202, { jobId: job.id })
+    }
+
+    // GET /api/transcribe/jobs/:id — 채보 진행률 폴링
+    const jobMatch = path.match(/^\/api\/transcribe\/jobs\/([a-f0-9-]+)$/)
+    if (req.method === 'GET' && jobMatch) {
+      const job = transcribeJobs.get(jobMatch[1])
+      if (!job) return json(res, 404, { error: 'job not found' })
+      return json(res, 200, {
+        id: job.id,
+        status: job.status,
+        stage: job.stage,
+        progress: job.progress,
+        slug: job.slug,
+        error: job.error,
+      })
     }
 
     // GET /api/songs?pattern=

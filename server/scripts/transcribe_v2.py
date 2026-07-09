@@ -27,6 +27,12 @@ SENSITIVITY = {
     "standard": (0.45, 0.28, 70, 0.25),
     "dense": (0.4, 0.25, 60, 0.2),
 }
+
+
+def report(pct, stage):
+    """진행률을 서버로 (원본 stderr — redirect_stderr 우회)"""
+    sys.__stderr__.write(f"PROGRESS {pct} {stage}\n")
+    sys.__stderr__.flush()
 MELODIC_STEMS = ("vocals", "guitar", "piano", "other", "bass")
 MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ml", "models")
 
@@ -422,17 +428,23 @@ def main() -> None:
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             import librosa
 
+            report(3, "오디오 분석 (BPM)")
             y, sr = librosa.load(audio, mono=True)
             grid = BeatGrid(y, sr)
             out["bpm"] = grid.bpm
 
+            report(8, "악기 분리 (6스템)")
             stems = separate(audio, tmpdir)
+            report(35, "음색 판별")
             out["timbres"] = classify_timbres(stems)
 
-            for name in MELODIC_STEMS:
+            STEM_LABEL = {"vocals": "보컬", "guitar": "기타", "piano": "피아노", "other": "신스", "bass": "베이스"}
+            present = [n for n in MELODIC_STEMS if stems.get(n)]
+            for i, name in enumerate(MELODIC_STEMS):
                 path = stems.get(name)
                 if not path or not stem_has_content(path):
                     continue
+                report(38 + round(40 * (present.index(name) / max(1, len(present)))), f"{STEM_LABEL[name]} 채보")
                 try:
                     if name == "piano":
                         notes = transcribe_transkun(path)
@@ -449,6 +461,7 @@ def main() -> None:
                     pass
 
             if "drums" in stems and stem_has_content(stems["drums"]):
+                report(80, "드럼 채보")
                 try:
                     drums = transcribe_drums_yourmt3(stems["drums"], grid)
                     if len(drums) >= 8:
@@ -457,7 +470,9 @@ def main() -> None:
                     pass
 
             if out["tracks"]["vocals"]:
+                report(90, "가사 추출")
                 out["lyrics"] = extract_lyrics_fw(stems["vocals"])
+            report(97, "악보 생성")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

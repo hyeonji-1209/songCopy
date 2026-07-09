@@ -312,6 +312,80 @@ body {
   vertical-align: -3px;
 }
 
+/* ── 채보 진행률 위젯 ─────────────────────── */
+.transcribe-widget {
+  position: fixed;
+  right: 20px;
+  bottom: 90px;
+  width: 280px;
+  background: var(--bar-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.18);
+  padding: 14px;
+  z-index: 60;
+}
+
+.tw-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.tw-title {
+  font-weight: 700;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tw-close {
+  border: none;
+  background: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: var(--ink-soft);
+  line-height: 1;
+}
+
+.tw-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--green-soft);
+  overflow: hidden;
+}
+
+.tw-fill {
+  height: 100%;
+  background: var(--green);
+  border-radius: 4px;
+  transition: width 0.6s ease;
+}
+
+.tw-stage {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.tw-note {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.tw-error {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #c0392b;
+}
+
+.tw-open {
+  width: 100%;
+}
+
 /* ── 오픈소스 라이선스 페이지 ─────────────── */
 .licenses-page {
   max-width: 860px;

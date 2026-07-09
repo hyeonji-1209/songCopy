@@ -7,6 +7,7 @@ import SongPage from './pages/SongPage'
 import AuthModal from './components/AuthModal'
 import HelpModal from './components/HelpModal'
 import NewTabMenu from './components/NewTabMenu'
+import TranscribeProgress from './components/TranscribeProgress'
 import { signout, useUser } from './lib/auth'
 import { syncFavoritesWithServer } from './lib/favorites'
 import { useTheme } from './lib/theme'
@@ -60,6 +61,7 @@ export default function App() {
         <Route path="/tab/:slug" element={<SongPage />} />
         <Route path="/licenses" element={<LicensesPage />} />
       </Routes>
+      <TranscribeProgress />
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
       {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
     </div>

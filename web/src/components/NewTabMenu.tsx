@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createSong, postTranscribe } from '../lib/api'
 import { audioFileToMonoWav } from '../lib/audioConvert'
+import { trackTranscribeJob } from '../lib/transcribeJob'
 import OpenFileButton from './OpenFileButton'
 
 export default function NewTabMenu() {
@@ -25,10 +26,11 @@ export default function NewTabMenu() {
       // 어떤 포맷이든 모노 22kHz wav로 변환해 용량 축소 (긴 곡도 업로드 가능)
       const data = await audioFileToMonoWav(file)
       const bpm = aiBpm.trim() ? Number(aiBpm) : null
-      const { slug } = await postTranscribe(aiTitle.trim(), bpm, data, 'wav', aiSensitivity)
+      const { jobId } = await postTranscribe(aiTitle.trim(), bpm, data, 'wav', aiSensitivity)
+      // 비동기 잡: 위젯이 진행률을 보여주고, 완료되면 악보로 이동 버튼이 뜬다
+      trackTranscribeJob(jobId, aiTitle.trim())
       setOpen(false)
       setAiTitle('')
-      navigate(`/tab/${slug}`)
     } catch (err) {
       if (err instanceof Error && err.message.includes('401')) {
         alert('AI 채보를 사용하려면 로그인이 필요합니다.')
@@ -123,7 +125,7 @@ export default function NewTabMenu() {
               </select>
             </label>
             <button className="auth-submit" type="submit" disabled={aiBusy || !aiTitle.trim()}>
-              {aiBusy ? '채보 중… (악기 분리 포함, 몇 분 걸려요)' : '악보 만들기'}
+              {aiBusy ? '접수 중…' : '악보 만들기'}
             </button>
             <span className="panel-note">mp3/wav/m4a 등 — 앞 3분까지 분석. BPM 비우면 자동 감지.</span>
           </form>

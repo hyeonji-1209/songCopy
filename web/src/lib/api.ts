@@ -107,11 +107,23 @@ export const postTranscribe = (
   ext: string,
   sensitivity = 'standard',
 ) =>
-  req<{ slug: string; noteCount: number; bpm: number }>('/api/transcribe', {
+  req<{ jobId: string }>('/api/transcribe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, bpm: bpm ?? undefined, b64: toBase64(data), ext, sensitivity }),
   })
+
+export interface TranscribeJobStatus {
+  id: string
+  status: 'queued' | 'running' | 'done' | 'failed'
+  stage: string
+  progress: number
+  slug: string | null
+  error: string | null
+}
+
+export const fetchTranscribeJob = (id: string) =>
+  req<TranscribeJobStatus>(`/api/transcribe/jobs/${id}`)
 
 export const createSong = (title: string, artist: string) =>
   req<{ slug: string }>('/api/songs', {
