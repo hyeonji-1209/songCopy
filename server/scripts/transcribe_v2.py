@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""AI 채보 파이프라인 v2 — 2026 오픈소스 SOTA 스택 (ml/.venv 전용).
+"""AI 채보 파이프라인 v2 — 상업 라이선스 안전 스택 (ml/.venv 전용).
 
-  분리:   BS-Roformer-SW (audio-separator) — 보컬/기타/피아노/베이스/other/드럼 6스템
-  채보:   YourMT3+ (mt3-infer) 주력, 피아노는 Transkun, 0노트 시 basic-pitch 폴백
-  드럼:   ADTOF-pytorch — 킥/스네어/햇/탐/심벌 5클래스
-  가사:   faster-whisper (VAD, medium/int8)
-  박자:   librosa 비트 트래킹 기반 BeatGrid (v1과 동일 방식)
+  분리:   MVSEP_API_KEY 있으면 MVSep API(BS Roformer SW, sep_type 61 — 출력물 상업 이용 허용),
+          없으면 로컬 BS-Roformer-SW (개발 전용 — 가중치 라이선스 불명, 상업 배포 불가)
+  채보:   YourMT3+ (가중치 Apache-2.0) 주력, 피아노는 Transkun(MIT), 특이 음색은 basic-pitch 폴백
+  드럼:   YourMT3+ 드럼 출력 (ADTOF는 CC BY-NC-SA라 제거 — docs/licensing.md)
+  음색:   PANNs Cnn14 (CC BY 4.0)
+  가사:   faster-whisper (VAD, medium/int8, 가중치 MIT)
+  박자:   librosa 비트 트래킹 기반 BeatGrid
 
 사용: ml/.venv/bin/python transcribe_v2.py <audio> [sensitivity]
-출력: {"bpm", "lyrics", "tracks": {vocals|guitar|piano|other|bass: [{start,end,midi,amp,qs,qd}],
+출력: {"bpm", "lyrics", "timbres", "tracks": {vocals|guitar|piano|other|bass: [{start,end,midi,amp,qs,qd}],
                                     drums: [{kind, slot}]}}
 """
 import contextlib
@@ -197,21 +199,37 @@ def transcribe_basic_pitch(path, sensitivity):
     return clean_notes(notes)
 
 
-def transcribe_drums_adtof(path, grid):
-    """ADTOF — 실음원 학습 드럼 채보 (킥/스네어/햇/탐/심벌)"""
-    from adtof_pytorch import transcribe_to_midi
-    import pretty_midi
+DRUM_KIND = {
+    35: "kick", 36: "kick",
+    37: "snare", 38: "snare", 40: "snare",
+    42: "hat", 44: "hat", 46: "hat",
+    41: "tom", 43: "tom", 45: "tom", 47: "tom", 48: "tom", 50: "tom",
+    49: "cymbal", 51: "cymbal", 52: "cymbal", 53: "cymbal", 55: "cymbal", 57: "cymbal", 59: "cymbal",
+}
 
-    kind_map = {35: "kick", 36: "kick", 38: "snare", 42: "hat", 46: "hat", 47: "tom", 49: "cymbal", 51: "cymbal"}
+
+def transcribe_drums_yourmt3(path, grid):
+    """YourMT3 드럼 채보 — 가중치 Apache-2.0 (상업 안전).
+
+    실측(실곡 드럼 스템): ADTOF와 킥 235↔240, 히트 76% 일치 — 뼈대 동일, 탐/햇을 더 잡는 경향.
+    """
+    import librosa
+    import pretty_midi
+    from mt3_infer import api
+
+    y, _ = librosa.load(path, sr=16000, mono=True)
+    mid = api.transcribe(y, model="yourmt3", sr=16000)
     with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as f:
         tmp = f.name
     try:
-        transcribe_to_midi(path, tmp)
+        mid.save(tmp)
         pm = pretty_midi.PrettyMIDI(tmp)
         events = []
         for inst in pm.instruments:
+            if not inst.is_drum:
+                continue
             for n in inst.notes:
-                kind = kind_map.get(n.pitch)
+                kind = DRUM_KIND.get(n.pitch)
                 if kind:
                     events.append({"kind": kind, "slot": grid.to_slot(float(n.start))})
         return events
@@ -309,8 +327,66 @@ def stem_has_content(path):
     return len(y) > 0 and float(np.sqrt(np.mean(y**2))) > 0.003
 
 
+def separate_mvsep(audio, outdir):
+    """MVSep API로 BS Roformer SW(sep_type 61) 분리 — 출력물 상업 이용 허용(MVSep Terms §7).
+
+    MVSEP_API_KEY 환경변수 필요. 업로드 → 해시 폴링 → 스템 다운로드.
+    """
+    import time
+    import requests
+
+    token = os.environ["MVSEP_API_KEY"]
+    with open(audio, "rb") as f:
+        r = requests.post(
+            "https://mvsep.com/api/separation/create",
+            data={"api_token": token, "sep_type": "61"},
+            files={"audiofile": f},
+            timeout=300,
+        )
+    r.raise_for_status()
+    j = r.json()
+    if not j.get("success"):
+        raise RuntimeError(f"mvsep create 실패: {j}")
+    job_hash = j["data"]["hash"]
+
+    deadline = time.time() + 1200
+    while time.time() < deadline:
+        time.sleep(8)
+        g = requests.get("https://mvsep.com/api/separation/get", params={"hash": job_hash}, timeout=60).json()
+        status = g.get("status")
+        if status == "done":
+            stems = {}
+            for item in g.get("data", {}).get("files", []):
+                url = item.get("url") or item.get("download")
+                if not url:
+                    continue
+                label = " ".join(str(item.get(k, "")) for k in ("type", "name", "stem")).lower() + " " + url.lower()
+                for name in (*MELODIC_STEMS, "drums"):
+                    if name in label and name not in stems:
+                        path = os.path.join(outdir, f"{name}.wav")
+                        with requests.get(url, stream=True, timeout=600) as dl:
+                            dl.raise_for_status()
+                            with open(path, "wb") as out:
+                                for chunk in dl.iter_content(1 << 16):
+                                    out.write(chunk)
+                        stems[name] = path
+            if stems:
+                return stems
+            raise RuntimeError(f"mvsep: 스템을 찾지 못함 — 응답 구조 확인 필요: {g}")
+        if status in ("failed", "error", "not_found"):
+            raise RuntimeError(f"mvsep 작업 실패: {g}")
+    raise RuntimeError("mvsep 대기 시간 초과 (20분)")
+
+
 def separate(audio, outdir):
-    """BS-Roformer-SW 6스템 분리 → {stem: path}"""
+    """6스템 분리 → {stem: path}.
+
+    MVSEP_API_KEY 있으면 API(상업 안전), 없으면 로컬 BS-Roformer-SW
+    (개발 전용 — 가중치 라이선스 불명이라 상업 서비스에서는 키 필수).
+    """
+    if os.environ.get("MVSEP_API_KEY"):
+        return separate_mvsep(audio, outdir)
+
     from audio_separator.separator import Separator
 
     sep = Separator(output_dir=outdir, model_file_dir=MODEL_DIR, log_level=40)
@@ -374,7 +450,7 @@ def main() -> None:
 
             if "drums" in stems and stem_has_content(stems["drums"]):
                 try:
-                    drums = transcribe_drums_adtof(stems["drums"], grid)
+                    drums = transcribe_drums_yourmt3(stems["drums"], grid)
                     if len(drums) >= 8:
                         out["tracks"]["drums"] = drums
                 except Exception:

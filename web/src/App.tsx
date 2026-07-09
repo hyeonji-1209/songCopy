@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, Route, Routes } from 'react-router-dom'
 import Home from './pages/Home'
+import LicensesPage from './pages/LicensesPage'
 import MyTabs from './pages/MyTabs'
 import SongPage from './pages/SongPage'
 import AuthModal from './components/AuthModal'
@@ -57,6 +58,7 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/mytabs" element={<MyTabs />} />
         <Route path="/tab/:slug" element={<SongPage />} />
+        <Route path="/licenses" element={<LicensesPage />} />
       </Routes>
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
       {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}

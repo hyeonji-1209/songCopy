@@ -43,7 +43,12 @@ export default function HelpModal({ onClose }: Props) {
             ))}
           </tbody>
         </table>
-        <p className="modal-note">악보를 드래그하면 구간이 선택되고, 루프로 반복 연습할 수 있습니다.</p>
+        <p className="modal-note">
+          악보를 드래그하면 구간이 선택되고, 루프로 반복 연습할 수 있습니다. ·{' '}
+          <a href="/licenses" onClick={onClose}>
+            오픈소스 라이선스
+          </a>
+        </p>
       </div>
     </div>
   )

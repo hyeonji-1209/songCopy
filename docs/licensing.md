@@ -22,18 +22,17 @@
 | demucs/htdemucs (v1 폴백) | MIT | **연구 목적 한정** (저자 명시, [Issue #327](https://github.com/facebookresearch/demucs/issues/327)) | 🔴 **불가 — 대체재로도 못 씀** |
 | MT3 원본/mt3-pytorch | Apache-2.0 / 없음 | 명시 라이선스 없음 | 🟡 불명 — YourMT3보다 못함 |
 
-## 상업 전환 시 해야 할 일
+## 상업 전환 체크리스트 (2026-07-09 이행 완료)
 
-1. **음원 분리 교체** — BS-Roformer-SW 자체 탑재 불가:
-   - MVSep API 경유 (Terms §7이 출력물 상업 이용 허용) 또는
-   - 상업 분리 API (LALAL.AI, AudioShake, Music.AI) 또는 원저작자 서면 허락
-   - demucs는 가중치가 연구 한정이라 대체재 아님
-2. **드럼 채보 교체** — ADTOF 제거 → **YourMT3의 드럼 출력** 사용 (멀티악기 지원, 가중치 Apache-2.0)
-3. **오픈소스 고지 페이지** 추가: alphaTab(MPL-2.0+소스 링크), sonivox(Apache-2.0, Sonic Network Inc.),
-   Bravura(OFL 1.1), PANNs(CC BY 4.0, Kong et al.), Whisper/faster-whisper(MIT), basic-pitch(Apache-2.0),
-   YourMT3 가중치(Apache-2.0)
-4. (선택) Transkun 저자에게 상업 사용 확인 메일 — 보수적으로 가려면 피아노도 basic-pitch로
-5. YourMT3의 GPL **코드**를 클라이언트로 전송하거나 온프레미스 배포하지 말 것 (서버 전용 유지)
+1. ✅ **음원 분리** — `MVSEP_API_KEY` 환경변수 설정 시 MVSep API(sep_type 61 = 같은 BS Roformer SW,
+   출력물 상업 이용은 Terms §7로 허용) 사용. 키가 없으면 로컬 모델 폴백(**개발 전용** — 상업 배포 불가).
+   ⚠️ **서비스 오픈 전 MVSep 계정 생성 + API 키 발급 + 서버 환경변수 설정 필요** (API 경로는 키가 없어 미실테스트).
+   demucs는 가중치가 연구 한정이라 대체재 아님.
+2. ✅ **드럼 채보** — ADTOF 제거(pip 패키지 + 클론 삭제) → **YourMT3 드럼 출력**으로 교체.
+   실측: 킥 235↔240, 히트 76% 일치 — 뼈대 동일, 드럼 단계 +1분.
+3. ✅ **오픈소스 고지 페이지** — `/licenses` (도움말 모달에서 링크).
+4. ⬜ (선택) Transkun 저자에게 상업 사용 확인 메일 — 보수적으로 가려면 피아노도 basic-pitch로
+5. ⚠️ 유지 조건: YourMT3의 GPL **코드**를 클라이언트로 전송하거나 온프레미스 배포하지 말 것 (서버 전용 유지)
 
 ## 개인/포트폴리오 용도
 

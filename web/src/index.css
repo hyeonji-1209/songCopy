@@ -312,6 +312,37 @@ body {
   vertical-align: -3px;
 }
 
+/* ── 오픈소스 라이선스 페이지 ─────────────── */
+.licenses-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 40px 24px 80px;
+}
+
+.licenses-note {
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+
+.licenses-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  margin-top: 16px;
+}
+
+.licenses-table th,
+.licenses-table td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.licenses-table a {
+  color: var(--green-dark);
+}
+
 /* ── 상시 사이드바 (믹서/표기/내보내기) ─────── */
 .side-panel {
   width: 320px;
