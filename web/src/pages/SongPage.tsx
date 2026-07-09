@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import * as alphaTab from '@coderline/alphatab'
 import {
   clearRevisions,
+  deleteSong,
   fetchContent,
   voteRevision,
   fetchRevisionContent,
@@ -68,6 +69,7 @@ function formatTime(ms: number): string {
 
 export default function SongPage() {
   const { slug } = useParams()
+  const navigate = useNavigate()
   const isUploaded = slug === '_uploaded'
   const [song, setSong] = useState<SongMeta | null>(null)
   const [songError, setSongError] = useState(false)
@@ -623,6 +625,21 @@ export default function SongPage() {
       }
       return next
     })
+  }
+
+  const removeSong = async () => {
+    if (!song) return
+    if (!window.confirm(`"${song.title}" 곡을 삭제할까요? 리비전·댓글까지 지워지고 되돌릴 수 없어요.`)) return
+    try {
+      await deleteSong(song.slug)
+      navigate('/')
+    } catch (e) {
+      alert(
+        e instanceof Error && e.message.includes('403')
+          ? '본인이 만든 곡만 삭제할 수 있습니다'
+          : '삭제에 실패했습니다',
+      )
+    }
   }
 
   const saveCurrentRevision = async () => {
@@ -1450,6 +1467,15 @@ export default function SongPage() {
                 title={isFavorite ? '즐겨찾기 해제' : '즐겨찾기'}
               >
                 {isFavorite ? '★' : '☆'}
+              </button>
+            )}
+            {song?.canDelete && (
+              <button
+                className="icon-btn"
+                onClick={() => void removeSong()}
+                title="이 곡 삭제 (내가 만든 곡)"
+              >
+                🗑
               </button>
             )}
             {song ? (

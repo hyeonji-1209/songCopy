@@ -67,6 +67,11 @@ try {
 } catch {
   /* 이미 있음 */
 }
+try {
+  db.exec('ALTER TABLE songs ADD COLUMN created_by INTEGER') // 만든 사람 (삭제 권한용)
+} catch {
+  /* 이미 있음 */
+}
 db.exec(`
   CREATE TABLE IF NOT EXISTS revision_votes (
     revision_id INTEGER NOT NULL REFERENCES revisions(id),
@@ -103,6 +108,7 @@ interface SongRow {
   seed_date: string
   tex: string
   source?: string | null
+  created_by?: number | null
 }
 
 const qList = db.prepare('SELECT * FROM songs ORDER BY title')
@@ -175,7 +181,14 @@ function sessionCookie(token: string, clear = false): string {
   return `sc_session=${clear ? '' : token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${clear ? 0 : 60 * 60 * 24 * 30}`
 }
 
-function songMeta(row: SongRow) {
+// 삭제 권한: 만든 사람 본인. created_by 기록 이전에 만들어진 AI 곡은 로그인 사용자 누구나(로컬 호환)
+function canDeleteSong(row: SongRow, userId: number | null): boolean {
+  if (userId == null) return false
+  if (row.created_by != null) return row.created_by === userId
+  return row.source === 'ai'
+}
+
+function songMeta(row: SongRow, userId: number | null = null) {
   const revs = qRevisions.all(row.id) as { id: number; date: string }[]
   return {
     slug: row.slug,
@@ -187,6 +200,7 @@ function songMeta(row: SongRow) {
     lyrics: (row as { lyrics?: string | null }).lyrics ?? null,
     latestRevision: revs[0] ?? null,
     revisionCount: revs.length,
+    canDelete: canDeleteSong(row, userId),
   }
 }
 
@@ -712,9 +726,10 @@ async function runTranscribeJob(job: TranscribeJob): Promise<void> {
       new Date().toISOString(),
       tex,
     )
-    db.prepare('UPDATE songs SET source = ?, lyrics = ? WHERE slug = ?').run(
+    db.prepare('UPDATE songs SET source = ?, lyrics = ?, created_by = ? WHERE slug = ?').run(
       'ai',
       result.lyrics?.trim() || null,
+      job.userId,
       slug,
     )
     job.slug = slug
@@ -818,6 +833,7 @@ const server = http.createServer(async (req, res) => {
 \\staff {score tabs}
 :1 r | r | r | r | r | r | r | r`
       insertSong.run(slug, title, artist, JSON.stringify(['기타']), new Date().toISOString(), tex)
+      db.prepare('UPDATE songs SET created_by = ? WHERE slug = ?').run(user.id, slug)
       return json(res, 201, { slug })
     }
 
@@ -897,7 +913,8 @@ const server = http.createServer(async (req, res) => {
             r.title.toLowerCase().includes(pattern) || r.artist.toLowerCase().includes(pattern),
         )
       }
-      return json(res, 200, rows.map(songMeta))
+      const uid = currentUser(req)?.id ?? null
+      return json(res, 200, rows.map((r) => songMeta(r, uid)))
     }
 
     // /api/songs/:slug[/...]
@@ -906,7 +923,22 @@ const server = http.createServer(async (req, res) => {
       const row = qBySlug.get(decodeURIComponent(m[1])) as SongRow | undefined
       if (!row) return json(res, 404, { error: 'song not found' })
 
-      if (req.method === 'GET' && !m[2]) return json(res, 200, songMeta(row))
+      if (req.method === 'GET' && !m[2]) return json(res, 200, songMeta(row, currentUser(req)?.id ?? null))
+
+      // DELETE /api/songs/:slug — 본인이 만든 곡 삭제 (연결 데이터까지)
+      if (req.method === 'DELETE' && !m[2]) {
+        const user = currentUser(req)
+        if (!user) return json(res, 401, { error: 'sign in required' })
+        if (!canDeleteSong(row, user.id)) {
+          return json(res, 403, { error: '본인이 만든 곡만 삭제할 수 있습니다' })
+        }
+        db.prepare('DELETE FROM revision_votes WHERE revision_id IN (SELECT id FROM revisions WHERE song_id = ?)').run(row.id)
+        db.prepare('DELETE FROM revisions WHERE song_id = ?').run(row.id)
+        db.prepare('DELETE FROM comments WHERE song_id = ?').run(row.id)
+        db.prepare('DELETE FROM favorites WHERE slug = ?').run(row.slug)
+        db.prepare('DELETE FROM songs WHERE id = ?').run(row.id)
+        return json(res, 200, { ok: true })
+      }
 
       // 최신 리비전이 있으면 GP7, 없으면 원본 alphaTex
       if (req.method === 'GET' && m[2] === 'content') {

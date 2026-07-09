@@ -25,6 +25,7 @@ export interface SongMeta {
   lyrics?: string | null
   latestRevision: RevisionInfo | null
   revisionCount: number
+  canDelete?: boolean
 }
 
 export type SongContent =
@@ -124,6 +125,9 @@ export interface TranscribeJobStatus {
 
 export const fetchTranscribeJob = (id: string) =>
   req<TranscribeJobStatus>(`/api/transcribe/jobs/${id}`)
+
+export const deleteSong = (slug: string) =>
+  req<{ ok: boolean }>(`/api/songs/${encodeURIComponent(slug)}`, { method: 'DELETE' })
 
 export const createSong = (title: string, artist: string) =>
   req<{ slug: string }>('/api/songs', {
