@@ -72,7 +72,7 @@ export default function SongPage() {
     return saved !== null ? saved !== '0' : window.innerWidth > 900
   })
   const [sideTab, setSideTab] = useState<'mixer' | 'play' | 'settings'>('mixer')
-  const [zoom, setZoom] = useState(110) // 악보 배율 %
+  const [zoom, setZoom] = useState(80) // 악보 배율 % — 80%면 4마디 고정에서도 겹치지 않음
   const [viewMode, setViewMode] = useState<'vertical' | 'horizontal'>('vertical')
   const upload = useUpload()
   const favorites = useFavorites()
@@ -92,8 +92,8 @@ export default function SongPage() {
   const [countIn, setCountIn] = useState(false)
   const [tracks, setTracks] = useState<TrackInfo[]>([])
   const [activeTrack, setActiveTrack] = useState(0)
-  // 자동 레이아웃이 기본: 밀도 높은 곡(AI 채보)을 4마디로 강제하면 음표가 겹친다
-  const [fourBars, setFourBars] = useState(false)
+  // 한 줄 4마디 고정(모든 마디 같은 폭) + 배율 80% 조합이 기본 — 겹침 없이 정렬됨
+  const [fourBars, setFourBars] = useState(true)
   const [dynamics, setDynamics] = useState(true)
   const [notationMode, setNotationMode] = useState<'both' | 'tab' | 'score'>('both')
   const [position, setPosition] = useState({ current: 0, end: 0 })
@@ -159,7 +159,8 @@ export default function SongPage() {
       },
       display: {
         layoutMode: alphaTab.LayoutMode.Page,
-        scale: 1.1,
+        scale: 0.8,
+        barsPerRow: 4, // 모든 마디 같은 폭, 한 줄 4마디
         padding: [40, 40], // 악보와 테두리 사이 여유
         systemPaddingTop: 22, // 단(시스템) 사이 간격 — 빽빽함 완화
         systemPaddingBottom: 22,
@@ -287,9 +288,9 @@ export default function SongPage() {
       setLoop(false)
       setMetronome(false)
       setCountIn(false)
-      setFourBars(false)
+      setFourBars(true)
       setDynamics(true)
-      setZoom(110)
+      setZoom(80)
       setViewMode('vertical')
       setPosition({ current: 0, end: 0 })
       setScoreMeta({ title: '', artist: '' })
