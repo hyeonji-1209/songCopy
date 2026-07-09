@@ -222,7 +222,10 @@ const fitDur = (avail: number) =>
   avail >= 16 ? 16 : avail >= 8 ? 8 : avail >= 4 ? 4 : avail >= 2 ? 2 : 1
 
 const PITCH_NAMES = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b']
-const pitchName = (midi: number) => `${PITCH_NAMES[midi % 12]}${Math.floor(midi / 12) - 1}`
+// 플랫 조성용: alphaTex 음이름의 #/b은 임시표 표기를 강제하므로 조성에 맞는 쪽을 써야 한다
+const PITCH_NAMES_FLAT = ['c', 'db', 'd', 'eb', 'e', 'f', 'gb', 'g', 'ab', 'a', 'bb', 'b']
+const pitchName = (midi: number, flat = false) =>
+  `${(flat ? PITCH_NAMES_FLAT : PITCH_NAMES)[midi % 12]}${Math.floor(midi / 12) - 1}`
 
 /** 노트 이벤트 → 마디별 alphaTex 토큰.
  * tuning 지정 시 프렛 매핑(탭), null이면 음이름(피아노/신스 등 오선보 전용) */
@@ -231,6 +234,7 @@ function notesToBars(
   bpm: number,
   tuning: number[] | null,
   beatSlots?: number[], // 비쉼표 비트가 놓인 슬롯 목록 수집 (가사 정렬용)
+  flat = false, // 음이름 모드에서 ♭식 표기 (플랫 조성)
 ): string[] | null {
   const grid = 15 / bpm // 16분음표(초)
   const lowest = tuning ? tuning[tuning.length - 1] : 36
@@ -260,7 +264,7 @@ function notesToBars(
     if (!tuning) {
       if (used.has(midi)) return null // 코드 내 중복 음 제거
       used.add(midi)
-      return pitchName(midi)
+      return pitchName(midi, flat)
     }
     let best: { fret: number; string: number } | null = null
     for (let s = 0; s < tuning.length; s++) {
@@ -436,6 +440,7 @@ function tracksToAlphaTex(
 ): string {
   const parts: string[] = []
   const ks = detectKeySignature(tracks)
+  const flats = !!ks && ['f', 'bb', 'eb', 'ab', 'db', 'gb', 'cb'].includes(ks)
   const withKs = (bars: string[] | null) => {
     if (bars && bars.length && ks && ks !== 'c') bars[0] = `\\ks ${ks} ${bars[0]}`
     return bars
@@ -446,7 +451,7 @@ function tracksToAlphaTex(
     tuning: number[] | null,
   ) => {
     if (!notes || notes.length < 8) return
-    const bars = withKs(notesToBars(notes, bpm, tuning))
+    const bars = withKs(notesToBars(notes, bpm, tuning, undefined, flats))
     if (bars) parts.push(build(bars))
   }
 
@@ -467,8 +472,8 @@ function tracksToAlphaTex(
   if (tracks.piano && tracks.piano.length >= 8) {
     const rh = tracks.piano.filter((n) => n.midi >= 60)
     const lh = tracks.piano.filter((n) => n.midi < 60)
-    const rhBars = rh.length >= 4 ? withKs(notesToBars(rh, bpm, null)) : null
-    const lhBars = lh.length >= 4 ? withKs(notesToBars(lh, bpm, null)) : null
+    const rhBars = rh.length >= 4 ? withKs(notesToBars(rh, bpm, null, undefined, flats)) : null
+    const lhBars = lh.length >= 4 ? withKs(notesToBars(lh, bpm, null, undefined, flats)) : null
     if (rhBars && lhBars) {
       const len = Math.max(rhBars.length, lhBars.length)
       while (rhBars.length < len) rhBars.push(':1 r')
