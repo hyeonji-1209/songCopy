@@ -226,7 +226,12 @@ const pitchName = (midi: number) => `${PITCH_NAMES[midi % 12]}${Math.floor(midi 
 
 /** 노트 이벤트 → 마디별 alphaTex 토큰.
  * tuning 지정 시 프렛 매핑(탭), null이면 음이름(피아노/신스 등 오선보 전용) */
-function notesToBars(notes: NoteEvent[], bpm: number, tuning: number[] | null): string[] | null {
+function notesToBars(
+  notes: NoteEvent[],
+  bpm: number,
+  tuning: number[] | null,
+  beatSlots?: number[], // 비쉼표 비트가 놓인 슬롯 목록 수집 (가사 정렬용)
+): string[] | null {
   const grid = 15 / bpm // 16분음표(초)
   const lowest = tuning ? tuning[tuning.length - 1] : 36
   const highest = tuning ? tuning[0] + 20 : 96
@@ -289,6 +294,7 @@ function notesToBars(notes: NoteEvent[], bpm: number, tuning: number[] | null): 
         if (mapped.length === 0) tokens.push(`${DUR[dur]} r`)
         else if (mapped.length === 1) tokens.push(`${DUR[dur]} ${mapped[0]}`)
         else tokens.push(`${DUR[dur]} (${mapped.join(' ')})`)
+        if (mapped.length > 0) beatSlots?.push(cursor)
         cursor += dur
       } else {
         const dur = fitDur(Math.min(nextEventSlot, barEnd) - cursor)
@@ -351,8 +357,42 @@ interface TranscribeTracks {
   drums?: DrumEvent[]
 }
 
+/** Whisper 가사([m:ss] 줄)를 보컬 비트 위치에 맞춰 alphaTex \lyrics 한 줄로.
+ * `_` 청크는 alphaTab이 빈 칸으로 렌더 — 가사 없는 비트를 건너뛰는 필러. */
+function lyricsToTexLine(lyrics: string, bpm: number, beatSlots: number[]): string | null {
+  const segs: { slot: number; words: string[] }[] = []
+  for (const line of lyrics.split('\n')) {
+    const m = /^\[(\d+):(\d{2})\]\s*(.+)$/.exec(line.trim())
+    if (!m) continue
+    const sec = Number(m[1]) * 60 + Number(m[2])
+    // ", [, ], + 는 alphaTex/가사 문법과 충돌 — 제거
+    const words = m[3].replace(/["[\]+\\]/g, '').split(/\s+/).filter(Boolean)
+    if (words.length) segs.push({ slot: Math.round((sec * bpm) / 15), words })
+  }
+  if (segs.length === 0 || beatSlots.length === 0) return null
+  const chunks: string[] = new Array(beatSlots.length).fill('_')
+  let bi = 0
+  for (const seg of segs) {
+    while (bi < beatSlots.length && beatSlots[bi] < seg.slot) bi++
+    for (const w of seg.words) {
+      if (bi >= beatSlots.length) break
+      chunks[bi++] = w
+    }
+  }
+  let end = chunks.length
+  while (end > 0 && chunks[end - 1] === '_') end--
+  if (end === 0) return null
+  return chunks.slice(0, end).join(' ')
+}
+
 // 감지된 악기만 트랙으로 생성 (6스템: vocals/guitar/piano/other/bass/drums)
-function tracksToAlphaTex(tracks: TranscribeTracks, bpm: number, title: string, artist: string): string {
+function tracksToAlphaTex(
+  tracks: TranscribeTracks,
+  bpm: number,
+  title: string,
+  artist: string,
+  lyrics?: string,
+): string {
   const parts: string[] = []
   const add = (
     notes: NoteEvent[] | undefined,
@@ -364,9 +404,36 @@ function tracksToAlphaTex(tracks: TranscribeTracks, bpm: number, title: string, 
     if (bars) parts.push(build(bars))
   }
 
-  add(tracks.vocals, (b) => `\\track "멜로디 (보컬)"\n\\staff {score tabs}\n${b.join(' |\n')}`, GUITAR_TUNING)
+  // 보컬: 가사가 있으면 음표 아래에 타임스탬프 맞춰 배치
+  if (tracks.vocals && tracks.vocals.length >= 8) {
+    const beatSlots: number[] = []
+    const bars = notesToBars(tracks.vocals, bpm, GUITAR_TUNING, beatSlots)
+    if (bars) {
+      const lyr = lyrics ? lyricsToTexLine(lyrics, bpm, beatSlots) : null
+      parts.push(
+        `\\track "멜로디 (보컬)"\n\\staff {score tabs}\n${lyr ? `\\lyrics 0 "${lyr}"\n` : ''}${bars.join(' |\n')}`,
+      )
+    }
+  }
   add(tracks.guitar, (b) => `\\track "기타"\n\\staff {score tabs}\n\\instrument 25\n${b.join(' |\n')}`, GUITAR_TUNING)
-  add(tracks.piano, (b) => `\\track "키보드 (피아노)"\n\\staff {score}\n\\instrument 0\n${b.join(' |\n')}`, null)
+  // 피아노는 큰보표: 가운데 도(C4) 기준 오른손(높은음자리)/왼손(낮은음자리) 2단.
+  // 한 손 분량이 사실상 없으면 기존처럼 단일 단으로.
+  if (tracks.piano && tracks.piano.length >= 8) {
+    const rh = tracks.piano.filter((n) => n.midi >= 60)
+    const lh = tracks.piano.filter((n) => n.midi < 60)
+    const rhBars = rh.length >= 4 ? notesToBars(rh, bpm, null) : null
+    const lhBars = lh.length >= 4 ? notesToBars(lh, bpm, null) : null
+    if (rhBars && lhBars) {
+      const len = Math.max(rhBars.length, lhBars.length)
+      while (rhBars.length < len) rhBars.push(':1 r')
+      while (lhBars.length < len) lhBars.push(':1 r')
+      parts.push(
+        `\\track "키보드 (피아노)"\n\\staff {score}\n\\instrument 0\n${rhBars.join(' |\n')} |\n\\staff {score}\n\\clef F4\n${lhBars.join(' |\n')}`,
+      )
+    } else {
+      add(tracks.piano, (b) => `\\track "키보드 (피아노)"\n\\staff {score}\n\\instrument 0\n${b.join(' |\n')}`, null)
+    }
+  }
   add(tracks.other, (b) => `\\track "신스/기타 악기"\n\\staff {score}\n\\instrument 81\n${b.join(' |\n')}`, null)
   add(tracks.bass, (b) => `\\track "베이스"\n\\staff {tabs}\n\\instrument 33\n\\tuning g2 d2 a1 e1\n${b.join(' |\n')}`, BASS_TUNING)
 
@@ -585,7 +652,7 @@ const server = http.createServer(async (req, res) => {
         const rawBpm = body.bpm && body.bpm > 0 ? body.bpm : (result.bpm ?? 120)
         const bpm = Math.min(220, Math.max(40, Math.round(rawBpm)))
         const artist = body.artist?.trim() || 'AI 채보'
-        const tex = tracksToAlphaTex(tracks, bpm, title, artist)
+        const tex = tracksToAlphaTex(tracks, bpm, title, artist, result.lyrics)
         const instruments = [
           ...(tracks.vocals?.length ? ['보컬'] : []),
           ...(tracks.guitar?.length ? ['기타'] : []),

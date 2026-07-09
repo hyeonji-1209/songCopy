@@ -50,6 +50,16 @@ const DARK_RESOURCES = {
   scoreInfoColor: '#e6e9ec',
 }
 
+// 인쇄 팝업은 흰 종이 기준 — 다크 테마 색이 승계되면 안 보이므로 항상 명시
+const PRINT_RESOURCES = {
+  mainGlyphColor: '#000000',
+  secondaryGlyphColor: 'rgba(0, 0, 0, 0.5)',
+  staffLineColor: '#222222',
+  barSeparatorColor: '#222222',
+  barNumberColor: '#3d6d38',
+  scoreInfoColor: '#000000',
+}
+
 function formatTime(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
   const m = Math.floor(total / 60)
@@ -62,6 +72,7 @@ export default function SongPage() {
   const isUploaded = slug === '_uploaded'
   const [song, setSong] = useState<SongMeta | null>(null)
   const [songError, setSongError] = useState(false)
+  const [showLyrics, setShowLyrics] = useState(true)
   const upload = useUpload()
   const favorites = useFavorites()
   const theme = useTheme()
@@ -616,7 +627,19 @@ export default function SongPage() {
 
   const playPause = () => apiRef.current?.playPause()
   const toBeginning = () => apiRef.current?.stop()
-  const print = () => apiRef.current?.print()
+  const print = () =>
+    apiRef.current?.print(undefined, { display: { resources: PRINT_RESOURCES } })
+
+  // 믹서에서 특정 악기 악보만 인쇄: 잠깐 그 트랙만 렌더한 상태로 팝업을 띄우고 원상복구
+  const printTrack = (index: number) => {
+    const api = apiRef.current
+    if (!api?.score) return
+    const prev = [...api.tracks]
+    api.renderTracks([api.score.tracks[index]])
+    api.print(undefined, { display: { resources: PRINT_RESOURCES } })
+    api.renderTracks(prev)
+  }
+
   const downloadMidi = () => apiRef.current?.downloadMidi()
 
   const downloadGp = () => {
@@ -1030,7 +1053,7 @@ export default function SongPage() {
         <div className="sheet-hint">
           악보를 드래그하면 구간이 선택되고, 루프(L)로 반복 연습할 수 있습니다.
         </div>
-        {song?.lyrics && (
+        {song?.lyrics && showLyrics && (
           <details className="lyrics" open>
             <summary>🎤 가사 (AI 추출)</summary>
             <pre>{song.lyrics}</pre>
@@ -1081,10 +1104,30 @@ export default function SongPage() {
               >
                 👁
               </button>
+              <button
+                className="chip"
+                onClick={() => printTrack(t.index)}
+                title="이 악기 악보만 인쇄"
+              >
+                🖨
+              </button>
             </div>
           ))}
+          {song?.lyrics && (
+            <div className="track-row">
+              <span className="track-icon">🎤</span>
+              <span className="track-name">가사</span>
+              <button
+                className={`chip ${showLyrics ? 'on' : ''}`}
+                onClick={() => setShowLyrics((v) => !v)}
+                title="가사 표시/숨김"
+              >
+                👁
+              </button>
+            </div>
+          )}
           <p className="panel-note">
-            S = 그 악기만 듣기 · M = 끄기 · 슬라이더 = 개별 볼륨 · 👁 = 악보 동시 보기
+            S = 그 악기만 듣기 · M = 끄기 · 슬라이더 = 개별 볼륨 · 👁 = 악보 동시 보기 · 🖨 = 그 악기만 인쇄
           </p>
         </div>
       )}
