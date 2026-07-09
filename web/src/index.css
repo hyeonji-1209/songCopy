@@ -1151,6 +1151,53 @@ kbd {
   padding: 8px 16px;
   font-size: 12px;
   color: var(--ink);
+  flex-wrap: wrap;
+}
+
+.editor-move {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.editor-fretpad {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.fret-btn {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bar-bg);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.fret-btn:hover:not(:disabled) {
+  border-color: var(--green);
+}
+
+.fret-btn.on {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+  font-weight: 700;
+}
+
+.fret-btn.del {
+  color: #c0392b;
+  font-weight: 700;
+}
+
+.fret-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .editor-help {

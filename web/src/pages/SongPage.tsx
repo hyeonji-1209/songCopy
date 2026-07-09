@@ -31,6 +31,13 @@ interface TrackInfo {
   volume: number
 }
 
+// 편집기 실행취소용 연산 기록
+type NoteEffect = 'palmMute' | 'letRing' | 'vibrato' | 'dead' | 'ghost'
+type EditOp =
+  | { kind: 'fret'; beat: alphaTab.model.Beat; string: number; before: number | null; after: number | null }
+  | { kind: 'duration'; beat: alphaTab.model.Beat; before: number; after: number }
+  | { kind: 'effect'; beat: alphaTab.model.Beat; string: number; effect: NoteEffect }
+
 const SPEED_PRESETS = [15, 25, 50, 75, 100, 125, 150, 175]
 
 const DARK_RESOURCES = {
@@ -119,6 +126,9 @@ export default function SongPage() {
   const [overlayRect, setOverlayRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const editModeRef = useRef(false)
   const selRef = useRef<{ beat: alphaTab.model.Beat; string: number } | null>(null)
+  const undoStack = useRef<EditOp[]>([])
+  const redoStack = useRef<EditOp[]>([])
+  const [editHint, setEditHint] = useState<string | null>(null)
   const pendingDigitRef = useRef<{ d: number; t: number } | null>(null)
   const midiReloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -202,16 +212,25 @@ export default function SongPage() {
       setReady(true)
       recomputeOverlay()
     })
-    // 에디터: 비트 클릭 → 좌표로 노트/현 판별해 선택
+    // 에디터: 비트 클릭 → 좌표로 노트/현 판별해 선택.
+    // 풀스코어에서 어느 악기를 클릭해도 되도록, 클릭한 트랙으로 자동 전환
     api.beatMouseDown.on((beat) => {
       if (!editModeRef.current) return
-      if (beat.voice.bar.staff.track.index !== activeTrackRef.current) return
-      // 에디터는 현악기 트랙만 지원 (키보드/드럼은 string/fret 개념이 없음)
-      if ((beat.voice.bar.staff.tuning.length || 0) === 0) return
+      const staff = beat.voice.bar.staff
+      // 현악기 트랙만 지원 (키보드/드럼은 string/fret 개념이 없음)
+      if ((staff.tuning.length || 0) === 0) {
+        setEditHint(`"${staff.track.name}" 트랙은 편집 미지원 (현악기 트랙만 가능)`)
+        return
+      }
+      setEditHint(null)
+      if (staff.track.index !== activeTrackRef.current) {
+        setActiveTrack(staff.track.index)
+        setTuning([...staff.tuning])
+      }
       const bl = api.renderer.boundsLookup
       const { x, y } = lastPointerRef.current
       const note = bl?.getNoteAtPos(beat, x, y) ?? null
-      const stringCount = beat.voice.bar.staff.tuning.length || 6
+      const stringCount = staff.tuning.length || 6
       const string = note
         ? note.string
         : Math.min(stringCount, Math.max(1, selRef.current?.string ?? 1))
@@ -438,6 +457,39 @@ export default function SongPage() {
     midiReloadTimer.current = setTimeout(() => apiRef.current?.loadMidiForScore(), 600)
   }
 
+  // ── 편집 연산 + 실행취소 스택 ──
+  // 모든 편집은 역연산 가능한 EditOp로 기록된다 (fret: 이전/이후 값, effect: 재토글이 역연산)
+  const pushOp = (op: EditOp) => {
+    undoStack.current.push(op)
+    if (undoStack.current.length > 300) undoStack.current.shift()
+    redoStack.current = []
+  }
+
+  const writeFret = (
+    beat: alphaTab.model.Beat,
+    string: number,
+    fret: number | null,
+    record = true,
+  ) => {
+    const existing = beat.notes.find((n) => n.string === string)
+    if (fret === null && !existing) return
+    if (record) pushOp({ kind: 'fret', beat, string, before: existing ? existing.fret : null, after: fret })
+    if (fret === null) {
+      beat.removeNote(existing!)
+      refreshAfterEdit(true)
+    } else if (existing) {
+      existing.fret = fret
+      refreshAfterEdit(false)
+    } else {
+      const note = new alphaTab.model.Note()
+      note.string = string
+      note.fret = fret
+      beat.addNote(note)
+      refreshAfterEdit(true)
+    }
+    setSelVersion((v) => v + 1)
+  }
+
   const applyDigit = (d: number) => {
     const sel = selRef.current
     if (!sel) return
@@ -451,43 +503,39 @@ export default function SongPage() {
     } else {
       pendingDigitRef.current = { d, t: now }
     }
-    const existing = sel.beat.notes.find((n) => n.string === sel.string)
-    if (existing) {
-      existing.fret = fret
-      refreshAfterEdit(false)
-    } else {
-      const note = new alphaTab.model.Note()
-      note.string = sel.string
-      note.fret = fret
-      sel.beat.addNote(note)
-      refreshAfterEdit(true)
-    }
-    setSelVersion((v) => v + 1)
+    writeFret(sel.beat, sel.string, fret)
+  }
+
+  // 키패드 클릭용: 두 자리 조합 없이 바로 입력
+  const setFretDirect = (fret: number) => {
+    const sel = selRef.current
+    if (!sel) return
+    pendingDigitRef.current = null
+    writeFret(sel.beat, sel.string, fret)
   }
 
   const deleteSelected = () => {
     const sel = selRef.current
     if (!sel) return
-    const existing = sel.beat.notes.find((n) => n.string === sel.string)
-    if (!existing) return
-    sel.beat.removeNote(existing)
-    refreshAfterEdit(true)
-    setSelVersion((v) => v + 1)
+    writeFret(sel.beat, sel.string, null)
   }
 
-  const setBeatDuration = (value: number) => {
+  const setBeatDuration = (value: number, record = true) => {
     const sel = selRef.current
     if (!sel) return
+    if (record) pushOp({ kind: 'duration', beat: sel.beat, before: sel.beat.duration as number, after: value })
     sel.beat.duration = value as alphaTab.model.Duration
     refreshAfterEdit(true)
     setSelVersion((v) => v + 1)
   }
 
-  const toggleNoteEffect = (effect: 'palmMute' | 'letRing' | 'vibrato' | 'dead' | 'ghost') => {
-    const sel = selRef.current
-    if (!sel) return
-    const note = sel.beat.notes.find((n) => n.string === sel.string)
-    if (!note) return
+  const applyEffectToggle = (
+    beat: alphaTab.model.Beat,
+    string: number,
+    effect: NoteEffect,
+  ): boolean => {
+    const note = beat.notes.find((n) => n.string === string)
+    if (!note) return false
     switch (effect) {
       case 'palmMute':
         note.isPalmMute = !note.isPalmMute
@@ -510,6 +558,41 @@ export default function SongPage() {
     }
     refreshAfterEdit(true)
     setSelVersion((v) => v + 1)
+    return true
+  }
+
+  const toggleNoteEffect = (effect: NoteEffect) => {
+    const sel = selRef.current
+    if (!sel) return
+    if (applyEffectToggle(sel.beat, sel.string, effect)) {
+      pushOp({ kind: 'effect', beat: sel.beat, string: sel.string, effect })
+    }
+  }
+
+  const applyOp = (op: EditOp, dir: 'undo' | 'redo') => {
+    if (op.kind === 'fret') {
+      writeFret(op.beat, op.string, dir === 'undo' ? op.before : op.after, false)
+    } else if (op.kind === 'duration') {
+      op.beat.duration = (dir === 'undo' ? op.before : op.after) as alphaTab.model.Duration
+      refreshAfterEdit(true)
+      setSelVersion((v) => v + 1)
+    } else {
+      applyEffectToggle(op.beat, op.string, op.effect) // 토글 재적용 = 역연산
+    }
+  }
+
+  const undoEdit = () => {
+    const op = undoStack.current.pop()
+    if (!op) return
+    applyOp(op, 'undo')
+    redoStack.current.push(op)
+  }
+
+  const redoEdit = () => {
+    const op = redoStack.current.pop()
+    if (!op) return
+    applyOp(op, 'redo')
+    undoStack.current.push(op)
   }
 
   const moveSelection = (key: string) => {
@@ -535,6 +618,8 @@ export default function SongPage() {
       else {
         selRef.current = null
         setOverlayRect(null)
+        undoStack.current = []
+        redoStack.current = []
       }
       return next
     })
@@ -922,6 +1007,13 @@ export default function SongPage() {
         return
       }
 
+      // 편집 모드: 실행취소/다시실행 (선택 없어도 동작)
+      if (editMode && (e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault()
+        if (e.shiftKey) redoEdit()
+        else undoEdit()
+        return
+      }
       // 편집 모드 전용 키
       if (editMode && selRef.current) {
         if (/^[0-9]$/.test(e.key)) {
@@ -1024,7 +1116,8 @@ export default function SongPage() {
   const artist = song ? song.artist : scoreMeta.artist
 
   // 지판/에디터 스트립이 열려 있으면 하단 패널들을 그 높이만큼 위로 올린다
-  const fretboardHeight = (showFretboard ? tuning.length * 22 + 62 : 0) + (editMode ? 52 : 0)
+  // 편집 모드 스트립은 키패드 포함 두 줄 정도 높이
+  const fretboardHeight = (showFretboard ? tuning.length * 22 + 62 : 0) + (editMode ? 96 : 0)
 
   const sel = selRef.current
   const selNote = editMode && sel ? sel.beat.notes.find((n) => n.string === sel.string) : undefined
@@ -1463,18 +1556,74 @@ export default function SongPage() {
         <div className="editor-strip">
           <div className="editor-help">
             <b>편집 모드</b>
-            <span>
-              노트 클릭 → <kbd>0~9</kbd> 프렛 입력 · <kbd>↑↓</kbd> 현 · <kbd>←→</kbd> 비트 ·{' '}
-              <kbd>Del</kbd> 삭제
-            </span>
+            {editHint && <span className="editor-dirty">{editHint}</span>}
+            {!selInfo && !editHint && (
+              <span>악보에서 아무 악기의 노트(또는 빈 자리)를 클릭하면 편집 도구가 나타나요</span>
+            )}
             {selInfo && (
               <span className="editor-sel">
                 마디 {selInfo.bar} · {selInfo.string}번 현
                 {selInfo.fret !== null ? ` · ${selInfo.fret}프렛` : ' · (비어 있음)'}
               </span>
             )}
+            {selInfo && (
+              <span className="editor-move">
+                <button className="chip" onClick={() => moveSelection('ArrowLeft')} title="이전 비트 (←)">
+                  ◀
+                </button>
+                <button className="chip" onClick={() => moveSelection('ArrowRight')} title="다음 비트 (→)">
+                  ▶
+                </button>
+                <button className="chip" onClick={() => moveSelection('ArrowUp')} title="윗줄 현 (↑)">
+                  ▲
+                </button>
+                <button className="chip" onClick={() => moveSelection('ArrowDown')} title="아랫줄 현 (↓)">
+                  ▼
+                </button>
+              </span>
+            )}
+            <span className="editor-move">
+              <button
+                className="chip"
+                onClick={undoEdit}
+                disabled={undoStack.current.length === 0}
+                title="실행취소 (Ctrl+Z)"
+              >
+                ↩ 취소
+              </button>
+              <button
+                className="chip"
+                onClick={redoEdit}
+                disabled={redoStack.current.length === 0}
+                title="다시실행 (Ctrl+Shift+Z)"
+              >
+                ↪
+              </button>
+            </span>
             {dirty && <span className="editor-dirty">● 저장 안 됨</span>}
           </div>
+          {selInfo && (
+            <div className="editor-fretpad">
+              <span className="editor-tools-label">프렛</span>
+              {Array.from({ length: 25 }, (_, n) => (
+                <button
+                  key={n}
+                  className={`fret-btn ${selInfo.fret === n ? 'on' : ''}`}
+                  onClick={() => setFretDirect(n)}
+                >
+                  {n}
+                </button>
+              ))}
+              <button
+                className="fret-btn del"
+                onClick={deleteSelected}
+                disabled={selInfo.fret === null}
+                title="노트 삭제 (Del)"
+              >
+                ×
+              </button>
+            </div>
+          )}
           {selInfo && (
             <div className="editor-tools">
               <span className="editor-tools-label">음길이</span>
