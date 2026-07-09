@@ -491,6 +491,9 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
 }
 
+// AI 채보 동시 실행 잠금 (ML 파이프라인은 무거워서 한 번에 하나만)
+let transcribeBusy = false
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost')
   const path = url.pathname
@@ -579,7 +582,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 201, { slug })
     }
 
-    // POST /api/transcribe — AI 채보: 오디오 → 탭 (로그인 필요)
+    // POST /api/transcribe — AI 채보: 오디오 → 탭 (로그인 필요, 한 번에 하나만)
     if (req.method === 'POST' && path === '/api/transcribe') {
       const user = currentUser(req)
       if (!user) return json(res, 401, { error: 'sign in required' })
@@ -600,6 +603,11 @@ const server = http.createServer(async (req, res) => {
       if (audio.length > 15_000_000) return json(res, 413, { error: '오디오는 15MB 이하만 가능합니다' })
       const ext = /^[a-z0-9]{1,5}$/.test(body.ext ?? '') ? body.ext : 'wav'
 
+      // 동시 채보 방지: ML 파이프라인 2개가 겹치면 서로 2배로 느려지고 발열만 커진다
+      if (transcribeBusy) {
+        return json(res, 409, { error: '이미 다른 채보가 진행 중입니다. 끝나면 다시 시도해주세요.' })
+      }
+      transcribeBusy = true
       const tmp = join(DATA_DIR, `transcribe-${randomUUID()}.${ext}`)
       writeFileSync(tmp, audio)
       try {
@@ -612,7 +620,10 @@ const server = http.createServer(async (req, res) => {
         // 비동기 spawn: 채보(수 분)가 도는 동안에도 서버가 다른 요청을 처리할 수 있어야 한다
         const proc = await new Promise<{ status: number | null; stdout: string; stderr: string }>(
           (resolve) => {
-            const p = spawn(python, [script, tmp, sensitivity])
+            // 스레드 상한: 전 코어 풀가동 대신 8스레드 — 발열↓, 속도 손실은 미미
+            const p = spawn(python, [script, tmp, sensitivity], {
+              env: { ...process.env, OMP_NUM_THREADS: '8', MKL_NUM_THREADS: '8' },
+            })
             let stdout = ''
             let stderr = ''
             p.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
@@ -677,6 +688,7 @@ const server = http.createServer(async (req, res) => {
         )
         return json(res, 201, { slug, noteCount: totalNotes, bpm, hasLyrics: !!result.lyrics?.trim() })
       } finally {
+        transcribeBusy = false
         try {
           unlinkSync(tmp)
         } catch {
