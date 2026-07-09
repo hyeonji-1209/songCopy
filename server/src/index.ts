@@ -304,7 +304,7 @@ function notesToBars(notes: NoteEvent[], bpm: number, tuning: number[] | null): 
 interface DrumEvent {
   time?: number
   slot?: number
-  kind: 'kick' | 'snare' | 'hat'
+  kind: 'kick' | 'snare' | 'hat' | 'tom' | 'cymbal'
 }
 
 /** 드럼 온셋 → 16분음표 그리드 퍼커션 토큰 */
@@ -314,6 +314,8 @@ function drumsToBars(events: DrumEvent[], bpm: number): string[] | null {
     kick: 'KickHit',
     snare: 'SnareHit',
     hat: 'HiHatClosed',
+    tom: 'MidTomHit',
+    cymbal: 'CrashMediumHit',
   }
   const bySlot = new Map<number, Set<string>>()
   let lastSlot = 0
@@ -534,11 +536,16 @@ const server = http.createServer(async (req, res) => {
       const tmp = join(DATA_DIR, `transcribe-${randomUUID()}.${ext}`)
       writeFileSync(tmp, audio)
       try {
-        const script = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'transcribe.py')
+        // v2(SOTA 스택: BS-Roformer-SW + YourMT3 + ADTOF) 우선, ML venv 없으면 v1 폴백
+        const base = join(dirname(fileURLToPath(import.meta.url)), '..')
+        const mlPython = join(base, 'ml', '.venv', 'bin', 'python')
+        const useV2 = existsSync(mlPython)
+        const python = useV2 ? mlPython : 'python3'
+        const script = join(base, 'scripts', useV2 ? 'transcribe_v2.py' : 'transcribe.py')
         // 비동기 spawn: 채보(수 분)가 도는 동안에도 서버가 다른 요청을 처리할 수 있어야 한다
         const proc = await new Promise<{ status: number | null; stdout: string; stderr: string }>(
           (resolve) => {
-            const p = spawn('python3', [script, tmp, sensitivity])
+            const p = spawn(python, [script, tmp, sensitivity])
             let stdout = ''
             let stderr = ''
             p.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
