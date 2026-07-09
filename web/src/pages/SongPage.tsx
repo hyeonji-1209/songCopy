@@ -73,6 +73,8 @@ export default function SongPage() {
   const [song, setSong] = useState<SongMeta | null>(null)
   const [songError, setSongError] = useState(false)
   const [showLyrics, setShowLyrics] = useState(true)
+  // 상시 사이드바 (믹서/표기/다운로드) — T로 접기/펴기, 상태는 localStorage 유지
+  const [sidebar, setSidebar] = useState(() => localStorage.getItem('songcopy:sidebar') !== '0')
   const upload = useUpload()
   const favorites = useFavorites()
   const theme = useTheme()
@@ -180,14 +182,14 @@ export default function SongPage() {
           name: t.name,
           mute: false,
           solo: false,
-          visible: t.index === 0,
+          visible: true,
           volume: 100,
         })),
       )
       setScoreMeta({ title: score.title, artist: score.artist })
       setTuning([...(score.tracks[0]?.staves[0]?.tuning ?? [])])
-      // 멀티트랙 곡은 믹서를 자동으로 열어 전 세션을 한눈에
-      if (score.tracks.length > 1) setPanel('tracks')
+      // 기본은 전 악기 풀스코어 — 사이드바에서 악기별로 좁혀볼 수 있다
+      if (score.tracks.length > 1) api.renderTracks([...score.tracks])
     })
     api.renderFinished.on(() => {
       setReady(true)
@@ -765,6 +767,19 @@ export default function SongPage() {
     })
   }
 
+  const toggleSidebar = () =>
+    setSidebar((v) => {
+      localStorage.setItem('songcopy:sidebar', v ? '0' : '1')
+      return !v
+    })
+
+  const showAllTracks = () => {
+    const api = apiRef.current
+    if (!api?.score) return
+    setTracks((prev) => prev.map((t) => ({ ...t, visible: true })))
+    api.renderTracks([...api.score.tracks])
+  }
+
   const selectTrack = (index: number) => {
     const api = apiRef.current
     if (!api?.score) return
@@ -904,7 +919,7 @@ export default function SongPage() {
           break
         case 't':
         case 'T':
-          togglePanel('tracks')
+          toggleSidebar()
           break
         case 'r':
         case 'R':
@@ -971,7 +986,116 @@ export default function SongPage() {
       className="song-page"
       style={{ '--fb-h': `${fretboardHeight}px` } as React.CSSProperties}
     >
-      <div className="sheet-viewport" ref={viewportRef}>
+      <div className="song-body">
+        {sidebar && (
+          <aside className="side-panel">
+            <div className="side-section">
+              <div className="side-head">
+                <span className="panel-title">믹서</span>
+                <button className="chip" onClick={showAllTracks} title="전 악기 풀스코어 보기">
+                  모두 보기
+                </button>
+              </div>
+              {tracks.map((t) => (
+                <div key={t.index} className={`track-row ${t.index === activeTrack ? 'active' : ''}`}>
+                  <span className="track-icon">{trackIcon(t.name)}</span>
+                  <button
+                    className="track-name"
+                    onClick={() => selectTrack(t.index)}
+                    title="이 트랙 악보만 보기"
+                  >
+                    {t.name}
+                  </button>
+                  <button
+                    className={`chip ${t.solo ? 'on' : ''}`}
+                    onClick={() => toggleSolo(t.index)}
+                    disabled={isOriginal}
+                    title="솔로 — 이 악기만 듣기"
+                  >
+                    S
+                  </button>
+                  <button
+                    className={`chip ${t.mute ? 'on' : ''}`}
+                    onClick={() => toggleMute(t.index)}
+                    disabled={isOriginal}
+                    title="뮤트"
+                  >
+                    M
+                  </button>
+                  <button
+                    className={`chip ${t.visible ? 'on' : ''}`}
+                    onClick={() => toggleMultiTrack(t.index)}
+                    title="악보에 표시 (여러 개 켜면 동시 보기)"
+                  >
+                    👁
+                  </button>
+                  <button className="chip" onClick={() => printTrack(t.index)} title="이 악기 악보만 인쇄">
+                    🖨
+                  </button>
+                  <input
+                    className="track-vol side-vol"
+                    type="range"
+                    min={0}
+                    max={150}
+                    value={t.volume}
+                    disabled={isOriginal}
+                    onChange={(e) => changeTrackVol(t.index, Number(e.target.value))}
+                    title={`볼륨 ${t.volume}%`}
+                  />
+                </div>
+              ))}
+              {song?.lyrics && (
+                <div className="track-row">
+                  <span className="track-icon">🎤</span>
+                  <span className="track-name">가사</span>
+                  <button
+                    className={`chip ${showLyrics ? 'on' : ''}`}
+                    onClick={() => setShowLyrics((v) => !v)}
+                    title="가사 표시/숨김"
+                  >
+                    👁
+                  </button>
+                </div>
+              )}
+              <p className="panel-note">S 솔로 · M 뮤트 · 👁 악보 표시 · 🖨 인쇄 · 슬라이더 볼륨</p>
+            </div>
+            <div className="side-section">
+              <span className="panel-title">표기</span>
+              <div className="speed-presets">
+                {(
+                  [
+                    ['both', '탭+오선'],
+                    ['tab', '탭만'],
+                    ['score', '오선만'],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    className={`chip ${notationMode === mode ? 'on' : ''}`}
+                    onClick={() => changeNotationMode(mode)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="side-section">
+              <span className="panel-title">내보내기</span>
+              <div className="speed-presets">
+                <button className="chip" onClick={print}>
+                  🖨 인쇄
+                </button>
+                <button className="chip" onClick={downloadMidi}>
+                  MIDI
+                </button>
+                <button className="chip" onClick={downloadGp}>
+                  .gp
+                </button>
+              </div>
+            </div>
+          </aside>
+        )}
+        <div className="sheet-viewport" ref={viewportRef}>
         <header className="song-head">
           <h1 className="song-title">{title} 탭</h1>
           <div className="song-meta">
@@ -1060,77 +1184,8 @@ export default function SongPage() {
           </details>
         )}
         {song && <Comments slug={song.slug} />}
-      </div>
-
-      {panel === 'tracks' && (
-        <div className="tracks-panel mixer">
-          <div className="panel-title">믹서</div>
-          {tracks.map((t) => (
-            <div key={t.index} className={`track-row ${t.index === activeTrack ? 'active' : ''}`}>
-              <span className="track-icon">{trackIcon(t.name)}</span>
-              <button className="track-name" onClick={() => selectTrack(t.index)} title="이 트랙 악보 보기">
-                {t.name}
-              </button>
-              <input
-                className="track-vol"
-                type="range"
-                min={0}
-                max={150}
-                value={t.volume}
-                disabled={isOriginal}
-                onChange={(e) => changeTrackVol(t.index, Number(e.target.value))}
-                title={`볼륨 ${t.volume}%`}
-              />
-              <button
-                className={`chip ${t.solo ? 'on' : ''}`}
-                onClick={() => toggleSolo(t.index)}
-                disabled={isOriginal}
-                title="솔로 — 이 트랙만 듣기"
-              >
-                S
-              </button>
-              <button
-                className={`chip ${t.mute ? 'on' : ''}`}
-                onClick={() => toggleMute(t.index)}
-                disabled={isOriginal}
-                title="뮤트"
-              >
-                M
-              </button>
-              <button
-                className={`chip ${t.visible ? 'on' : ''}`}
-                onClick={() => toggleMultiTrack(t.index)}
-                title="악보에 표시 (여러 개 켜면 동시 보기)"
-              >
-                👁
-              </button>
-              <button
-                className="chip"
-                onClick={() => printTrack(t.index)}
-                title="이 악기 악보만 인쇄"
-              >
-                🖨
-              </button>
-            </div>
-          ))}
-          {song?.lyrics && (
-            <div className="track-row">
-              <span className="track-icon">🎤</span>
-              <span className="track-name">가사</span>
-              <button
-                className={`chip ${showLyrics ? 'on' : ''}`}
-                onClick={() => setShowLyrics((v) => !v)}
-                title="가사 표시/숨김"
-              >
-                👁
-              </button>
-            </div>
-          )}
-          <p className="panel-note">
-            S = 그 악기만 듣기 · M = 끄기 · 슬라이더 = 개별 볼륨 · 👁 = 악보 동시 보기 · 🖨 = 그 악기만 인쇄
-          </p>
         </div>
-      )}
+      </div>
 
       {panel === 'speed' && (
         <div className="speed-panel">
@@ -1398,8 +1453,8 @@ export default function SongPage() {
 
       <footer className="player-bar">
         <button
-          className={`pb-track ${panel === 'tracks' ? 'on' : ''}`}
-          onClick={() => togglePanel('tracks')}
+          className={`pb-track ${sidebar ? 'on' : ''}`}
+          onClick={toggleSidebar}
           title="트랙 (T)"
         >
           <span className="pb-track-name">{active ? active.name : '트랙'}</span>
