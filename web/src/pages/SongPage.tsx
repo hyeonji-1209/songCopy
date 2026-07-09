@@ -740,10 +740,31 @@ export default function SongPage() {
     api.render()
   }
 
+  // 페이지 넘김: 마디 경계에 맞춰 한 화면씩 — 잘린 마디 없이 책장 넘기듯
   const flipPage = (dir: 1 | -1) => {
     const vp = viewportRef.current
+    const api = apiRef.current
     if (!vp) return
-    vp.scrollBy({ left: dir * vp.clientWidth * 0.85, behavior: 'smooth' })
+    const width = vp.clientWidth
+    const left = vp.scrollLeft
+    const bars = (api?.renderer.boundsLookup?.staffSystems ?? [])
+      .flatMap((s) => s.bars)
+      .map((b) => ({ x: b.realBounds.x, r: b.realBounds.x + b.realBounds.w }))
+      .sort((a, b) => a.x - b.x)
+    let target: number
+    if (bars.length === 0) {
+      target = left + dir * width * 0.85
+    } else if (dir === 1) {
+      // 다음 페이지 = 현재 화면에 다 안 들어간 첫 마디부터
+      const next = bars.find((b) => b.r > left + width + 2)
+      target = next ? next.x : left + width
+    } else {
+      // 이전 페이지 = 한 화면 왼쪽 범위에서 시작하는 첫 완전한 마디부터
+      const from = Math.max(0, left - width)
+      const cand = bars.find((b) => b.x >= from - 2)
+      target = cand && cand.x < left - 2 ? cand.x : from
+    }
+    vp.scrollTo({ left: Math.max(0, target - 12), behavior: 'smooth' })
   }
 
   const changeNotationMode = (mode: 'both' | 'tab' | 'score') => {
