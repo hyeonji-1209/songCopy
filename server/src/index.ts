@@ -732,7 +732,8 @@ const server = http.createServer(async (req, res) => {
             let stderr = ''
             p.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
             p.stderr.on('data', (d: Buffer) => (stderr += d.toString()))
-            const timer = setTimeout(() => p.kill('SIGKILL'), 600_000)
+            // 촘촘(고정밀) 모드는 다중 시도 앙상블이라 2~4배 오래 걸림
+            const timer = setTimeout(() => p.kill('SIGKILL'), sensitivity === 'dense' ? 1800_000 : 600_000)
             p.on('close', (code) => {
               clearTimeout(timer)
               resolve({ status: code, stdout, stderr })

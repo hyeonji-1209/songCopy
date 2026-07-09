@@ -119,7 +119,7 @@ export default function NewTabMenu() {
               <select value={aiSensitivity} onChange={(e) => setAiSensitivity(e.target.value)}>
                 <option value="precise">정밀 (유령음 최소)</option>
                 <option value="standard">표준 (권장)</option>
-                <option value="dense">촘촘 (모든 음)</option>
+                <option value="dense">최고 정확도 (다중 시도, 2~4배 느림)</option>
               </select>
             </label>
             <button className="auth-submit" type="submit" disabled={aiBusy || !aiTitle.trim()}>

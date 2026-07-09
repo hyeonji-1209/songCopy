@@ -130,13 +130,18 @@ def midi_file_to_notes(path):
     return sorted(notes, key=lambda n: n["start"])
 
 
-def transcribe_yourmt3(path):
-    """YourMT3+ 채보 (실악기 음색용 SOTA)"""
+def transcribe_yourmt3(path, sensitivity="standard"):
+    """YourMT3+ 채보 (실악기 음색용 SOTA).
+
+    촘촘(dense) 모드: 적응 전처리 + 다중 시도 — 밀집 패턴에서 누락 노트를 크게 줄인다
+    (타임스트레치 여러 배율로 재시도 후 최적 결과 선택, 시간 2~4배).
+    """
     import librosa
     from mt3_infer import api
 
     y, _ = librosa.load(path, sr=16000, mono=True)
-    mid = api.transcribe(y, model="yourmt3", sr=16000)
+    kwargs = {"adaptive": True, "num_attempts": 2} if sensitivity == "dense" else {}
+    mid = api.transcribe(y, model="yourmt3", sr=16000, **kwargs)
     with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as f:
         tmp = f.name
     try:
@@ -356,7 +361,7 @@ def main() -> None:
                     if name == "piano":
                         notes = transcribe_transkun(path)
                     else:
-                        notes = transcribe_yourmt3(path)
+                        notes = transcribe_yourmt3(path, sensitivity)
                     if len(notes) < 8:  # SOTA 모델이 못 잡는 음색 → basic-pitch 폴백
                         notes = transcribe_basic_pitch(path, sensitivity)
                     if len(notes) >= 8:
