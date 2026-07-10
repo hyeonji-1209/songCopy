@@ -620,12 +620,13 @@ interface TranscribeJob {
   bpm: number | null
   sensitivity: string
   tmp: string
-  status: 'queued' | 'running' | 'done' | 'failed'
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
   stage: string
   progress: number
   slug: string | null
   error: string | null
   createdAt: number
+  proc?: ReturnType<typeof spawn> | null // 실행 중 프로세스 (중지용)
 }
 
 const transcribeJobs = new Map<string, TranscribeJob>()
@@ -638,6 +639,7 @@ async function runTranscribeJob(job: TranscribeJob): Promise<void> {
       transcribeJobs.delete(id)
     }
   }
+  if (job.status === 'cancelled') return // 큐 대기 중 취소됨
   job.status = 'running'
   job.stage = '준비 중'
   try {
@@ -653,6 +655,7 @@ async function runTranscribeJob(job: TranscribeJob): Promise<void> {
         const p = spawn(python, [script, job.tmp, job.sensitivity], {
           env: { ...process.env, OMP_NUM_THREADS: '8', MKL_NUM_THREADS: '8' },
         })
+        job.proc = p
         let stdout = ''
         let stderr = ''
         p.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
@@ -668,10 +671,10 @@ async function runTranscribeJob(job: TranscribeJob): Promise<void> {
             }
           }
         })
-        // 촘촘(고정밀) 모드는 다중 시도 앙상블이라 2~4배 오래 걸림
+        // 8분 곡을 CPU로 처리하면 20분+ 걸릴 수 있다 (촘촘 모드는 다중 시도라 그 이상)
         const timer = setTimeout(
           () => p.kill('SIGKILL'),
-          job.sensitivity === 'dense' ? 1800_000 : 600_000,
+          job.sensitivity === 'dense' ? 5400_000 : 2400_000,
         )
         p.on('close', (code) => {
           clearTimeout(timer)
@@ -683,9 +686,21 @@ async function runTranscribeJob(job: TranscribeJob): Promise<void> {
         })
       },
     )
+    job.proc = null
+    if ((job.status as string) === 'cancelled') return
     if (proc.status !== 0) {
-      console.error('transcribe failed:', proc.stderr?.slice(0, 500))
-      throw new Error('AI 채보 실행 실패 (서버 로그 확인)')
+      // PROGRESS 줄을 걷어내고 마지막(트레이스백) 위주로 기록
+      const trace = (proc.stderr ?? '')
+        .split('\n')
+        .filter((l) => !l.startsWith('PROGRESS '))
+        .join('\n')
+        .slice(-1000)
+      console.error('transcribe failed (exit', proc.status, '):', trace)
+      throw new Error(
+        proc.status === null || proc.status > 128
+          ? '처리 시간 초과 또는 메모리 부족으로 중단됐습니다. 잠시 후 다시 시도해주세요.'
+          : 'AI 채보 실행 실패 (서버 로그 확인)',
+      )
     }
     const result = JSON.parse(proc.stdout) as {
       tracks?: TranscribeTracks
@@ -737,9 +752,12 @@ async function runTranscribeJob(job: TranscribeJob): Promise<void> {
     job.stage = '완료'
     job.status = 'done'
   } catch (e) {
-    job.status = 'failed'
-    job.error = e instanceof Error ? e.message : String(e)
+    if ((job.status as string) !== 'cancelled') {
+      job.status = 'failed'
+      job.error = e instanceof Error ? e.message : String(e)
+    }
   } finally {
+    job.proc = null
     try {
       unlinkSync(job.tmp)
     } catch {
@@ -858,12 +876,12 @@ const server = http.createServer(async (req, res) => {
       if (audio.length > 32_000_000) return json(res, 413, { error: '오디오는 32MB 이하만 가능합니다 (약 8분)' })
       const ext = /^[a-z0-9]{1,5}$/.test(body.ext ?? '') ? body.ext : 'wav'
 
-      // 사용자당 활성 잡 1개 (중복 제출 방지)
-      const active = [...transcribeJobs.values()].find(
+      // 다음 곡 예약 허용 — 사용자당 활성 잡 5개까지 큐잉 (순차 처리)
+      const mine = [...transcribeJobs.values()].filter(
         (j) => j.userId === user.id && (j.status === 'queued' || j.status === 'running'),
       )
-      if (active) {
-        return json(res, 409, { error: '이미 진행 중인 채보가 있습니다.', jobId: active.id })
+      if (mine.length >= 5) {
+        return json(res, 429, { error: '대기열이 가득 찼습니다 (최대 5곡). 끝나면 다시 예약해주세요.' })
       }
       const tmp = join(DATA_DIR, `transcribe-${randomUUID()}.${ext}`)
       writeFileSync(tmp, audio)
@@ -888,19 +906,40 @@ const server = http.createServer(async (req, res) => {
       return json(res, 202, { jobId: job.id })
     }
 
-    // GET /api/transcribe/jobs/:id — 채보 진행률 폴링
+    // GET(진행률 폴링) / DELETE(중지) /api/transcribe/jobs/:id
     const jobMatch = path.match(/^\/api\/transcribe\/jobs\/([a-f0-9-]+)$/)
-    if (req.method === 'GET' && jobMatch) {
+    if (jobMatch) {
       const job = transcribeJobs.get(jobMatch[1])
       if (!job) return json(res, 404, { error: 'job not found' })
-      return json(res, 200, {
-        id: job.id,
-        status: job.status,
-        stage: job.stage,
-        progress: job.progress,
-        slug: job.slug,
-        error: job.error,
-      })
+      if (req.method === 'GET') {
+        // 내 앞에 몇 곡이 있는지 (대기 표시용)
+        const ahead =
+          job.status === 'queued'
+            ? [...transcribeJobs.values()].filter(
+                (j) =>
+                  (j.status === 'queued' || j.status === 'running') && j.createdAt < job.createdAt,
+              ).length
+            : 0
+        return json(res, 200, {
+          id: job.id,
+          status: job.status,
+          stage: job.stage,
+          progress: job.progress,
+          slug: job.slug,
+          error: job.error,
+          ahead,
+        })
+      }
+      if (req.method === 'DELETE') {
+        const user = currentUser(req)
+        if (!user || user.id !== job.userId) return json(res, 403, { error: '본인 작업만 중지할 수 있습니다' })
+        if (job.status === 'queued' || job.status === 'running') {
+          job.status = 'cancelled'
+          job.stage = '중지됨'
+          job.proc?.kill('SIGKILL')
+        }
+        return json(res, 200, { ok: true, status: job.status })
+      }
     }
 
     // GET /api/songs?pattern=

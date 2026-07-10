@@ -386,6 +386,12 @@ body {
   width: 100%;
 }
 
+.tw-job + .tw-job {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
 /* ── 오픈소스 라이선스 페이지 ─────────────── */
 .licenses-page {
   max-width: 860px;

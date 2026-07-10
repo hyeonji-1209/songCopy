@@ -1,35 +1,51 @@
-// AI 채보 잡 추적: 제출 후 진행률을 폴링하고 어느 페이지에서든 위젯으로 보여준다.
-// 페이지 새로고침에도 살아남게 jobId는 localStorage에 보관.
+// AI 채보 잡 추적: 여러 곡을 예약(큐)하고 각각의 진행률을 폴링, 어느 페이지에서든 위젯으로 표시.
+// 새로고침에도 살아남게 활성 잡 목록을 localStorage에 보관.
 import { useSyncExternalStore } from 'react'
-import { fetchTranscribeJob, type TranscribeJobStatus } from './api'
+import { cancelTranscribeJob, fetchTranscribeJob, type TranscribeJobStatus } from './api'
 
-const KEY = 'songcopy:transcribe-job'
+const KEY = 'songcopy:transcribe-jobs'
 
-interface JobState extends TranscribeJobStatus {
+export interface JobState extends TranscribeJobStatus {
   title: string
+  ahead?: number // 내 앞 대기/실행 중인 잡 수
 }
 
-let state: JobState | null = null
+let jobs: JobState[] = []
 let timer: ReturnType<typeof setInterval> | null = null
 const listeners = new Set<() => void>()
 
 function emit() {
+  jobs = [...jobs] // useSyncExternalStore 스냅샷 참조 갱신
   for (const l of listeners) l()
 }
 
+const isActive = (j: JobState) => j.status === 'queued' || j.status === 'running'
+
+function save() {
+  const active = jobs.filter(isActive).map((j) => ({ id: j.id, title: j.title }))
+  if (active.length) localStorage.setItem(KEY, JSON.stringify(active))
+  else localStorage.removeItem(KEY)
+}
+
 async function poll() {
-  if (!state) return
-  try {
-    const s = await fetchTranscribeJob(state.id)
-    state = { ...state, ...s }
-    if (s.status === 'done' || s.status === 'failed') stopPolling()
-    emit()
-  } catch {
-    // 서버 재시작 등으로 잡이 사라진 경우
-    state = state && { ...state, status: 'failed', error: '작업 정보를 찾을 수 없습니다 (서버 재시작?)' }
+  const active = jobs.filter(isActive)
+  if (active.length === 0) {
     stopPolling()
-    emit()
+    return
   }
+  await Promise.all(
+    active.map(async (j) => {
+      try {
+        const s = (await fetchTranscribeJob(j.id)) as JobState
+        Object.assign(j, s)
+      } catch {
+        j.status = 'failed'
+        j.error = '작업 정보를 찾을 수 없습니다 (서버 재시작?)'
+      }
+    }),
+  )
+  save()
+  emit()
 }
 
 function startPolling() {
@@ -41,19 +57,33 @@ function startPolling() {
 function stopPolling() {
   if (timer) clearInterval(timer)
   timer = null
-  localStorage.removeItem(KEY)
 }
 
 export function trackTranscribeJob(id: string, title: string) {
-  state = { id, title, status: 'queued', stage: '대기 중', progress: 0, slug: null, error: null }
-  localStorage.setItem(KEY, JSON.stringify({ id, title }))
+  jobs.push({ id, title, status: 'queued', stage: '대기 중', progress: 0, slug: null, error: null })
+  save()
   startPolling()
   emit()
 }
 
-export function dismissTranscribeJob() {
-  state = null
-  stopPolling()
+export function dismissJob(id: string) {
+  jobs = jobs.filter((j) => j.id !== id)
+  save()
+  emit()
+}
+
+export async function cancelJob(id: string) {
+  try {
+    await cancelTranscribeJob(id)
+  } catch {
+    /* 이미 끝났거나 서버 재시작 — 아래에서 상태만 정리 */
+  }
+  const j = jobs.find((x) => x.id === id)
+  if (j && isActive(j)) {
+    j.status = 'cancelled'
+    j.stage = '중지됨'
+  }
+  save()
   emit()
 }
 
@@ -61,20 +91,22 @@ export function dismissTranscribeJob() {
 const saved = localStorage.getItem(KEY)
 if (saved) {
   try {
-    const { id, title } = JSON.parse(saved) as { id: string; title: string }
-    state = { id, title, status: 'queued', stage: '확인 중', progress: 0, slug: null, error: null }
-    startPolling()
+    const list = JSON.parse(saved) as Array<{ id: string; title: string }>
+    for (const { id, title } of list) {
+      jobs.push({ id, title, status: 'queued', stage: '확인 중', progress: 0, slug: null, error: null })
+    }
+    if (jobs.length) startPolling()
   } catch {
     localStorage.removeItem(KEY)
   }
 }
 
-export function useTranscribeJob(): JobState | null {
+export function useTranscribeJobs(): JobState[] {
   return useSyncExternalStore(
     (cb) => {
       listeners.add(cb)
       return () => listeners.delete(cb)
     },
-    () => state,
+    () => jobs,
   )
 }

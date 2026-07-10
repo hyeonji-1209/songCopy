@@ -116,7 +116,7 @@ export const postTranscribe = (
 
 export interface TranscribeJobStatus {
   id: string
-  status: 'queued' | 'running' | 'done' | 'failed'
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
   stage: string
   progress: number
   slug: string | null
@@ -125,6 +125,9 @@ export interface TranscribeJobStatus {
 
 export const fetchTranscribeJob = (id: string) =>
   req<TranscribeJobStatus>(`/api/transcribe/jobs/${id}`)
+
+export const cancelTranscribeJob = (id: string) =>
+  req<{ ok: boolean }>(`/api/transcribe/jobs/${id}`, { method: 'DELETE' })
 
 export const deleteSong = (slug: string) =>
   req<{ ok: boolean }>(`/api/songs/${encodeURIComponent(slug)}`, { method: 'DELETE' })
