@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:apify.com)",
+      "WebFetch(domain:www.guitarchalk.com)",
+      "WebFetch(domain:spark.mwm.ai)",
+      "Bash(node -e \"console.log\\(Object.keys\\(require\\('@coderline/alphatab/package.json'\\).exports\\)\\)\")",
+      "Bash(node --input-type=module -e ' *)",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(server/ml/.venv/bin/pip show *)",
+      "Bash(server/ml/.venv/bin/modal app *)",
+      "Bash(server/ml/.venv/bin/modal volume *)"
+    ]
+  }
+}

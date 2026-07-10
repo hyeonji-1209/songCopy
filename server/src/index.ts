@@ -632,6 +632,139 @@ interface TranscribeJob {
 const transcribeJobs = new Map<string, TranscribeJob>()
 let jobChain: Promise<void> = Promise.resolve()
 
+interface TranscribeResult {
+  tracks?: TranscribeTracks
+  bpm?: number | null
+  lyrics?: string
+  timbres?: { guitar?: string; other?: string }
+  error?: string
+}
+
+// Modal GPU 워커 설정: 환경변수 우선, 없으면 server/.modal.json (배포 스크립트가 생성)
+function loadModalConfig(): { submit: string; result: string; token: string } | null {
+  const env = process.env
+  if (env.MODAL_SUBMIT_URL && env.MODAL_RESULT_URL && env.MODAL_TOKEN) {
+    return { submit: env.MODAL_SUBMIT_URL, result: env.MODAL_RESULT_URL, token: env.MODAL_TOKEN }
+  }
+  try {
+    const p = join(dirname(fileURLToPath(import.meta.url)), '..', '.modal.json')
+    if (!existsSync(p)) return null
+    const cfg = JSON.parse(readFileSync(p, 'utf-8')) as {
+      submitUrl?: string
+      resultUrl?: string
+      token?: string
+    }
+    if (cfg.submitUrl && cfg.resultUrl && cfg.token) {
+      return { submit: cfg.submitUrl, result: cfg.resultUrl, token: cfg.token }
+    }
+  } catch {
+    /* 설정 없음 */
+  }
+  return null
+}
+
+// GPU 워커(Modal)로 원격 채보: 제출 → 폴링. 중지 시 null 반환
+async function runRemoteTranscribe(
+  job: TranscribeJob,
+  cfg: { submit: string; result: string; token: string },
+): Promise<TranscribeResult | null> {
+  job.stage = 'GPU 워커 제출'
+  const headers = { 'Content-Type': 'application/json', authorization: `Bearer ${cfg.token}` }
+  const b64 = readFileSync(job.tmp).toString('base64')
+  const res = await fetch(cfg.submit, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ b64, sensitivity: job.sensitivity }),
+  })
+  if (!res.ok) throw new Error(`GPU 워커 제출 실패 (${res.status})`)
+  const { call_id } = (await res.json()) as { call_id: string }
+
+  job.stage = 'GPU 처리 중'
+  const started = Date.now()
+  const deadline = started + 30 * 60_000
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 5000))
+    if ((job.status as string) === 'cancelled') return null
+    const g = await fetch(`${cfg.result}?call_id=${encodeURIComponent(call_id)}`, { headers })
+    if (!g.ok) throw new Error(`GPU 상태 조회 실패 (${g.status})`)
+    const s = (await g.json()) as { status: string; result?: TranscribeResult; error?: string }
+    if (s.status === 'done' && s.result) {
+      job.progress = 99
+      return s.result
+    }
+    if (s.status === 'failed') throw new Error(`GPU 처리 실패: ${s.error ?? '알 수 없음'}`)
+    // 경과 기반 진행률 추정 (전형 2~3분; 첫 실행은 모델 다운로드로 더 걸림)
+    const elapsed = (Date.now() - started) / 1000
+    job.progress = Math.min(95, Math.round((elapsed / 150) * 100))
+    if (elapsed > 240) job.stage = 'GPU 처리 중 (첫 실행은 모델 다운로드로 오래 걸려요)'
+  }
+  throw new Error('GPU 처리 시간 초과 (30분)')
+}
+
+// 로컬 ML venv로 채보 (CPU). 중지 시 null 반환
+async function runLocalTranscribe(job: TranscribeJob): Promise<TranscribeResult | null> {
+  // v2(상업 안전 스택) 우선, ML venv 없으면 v1 폴백
+  const base = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const mlPython = join(base, 'ml', '.venv', 'bin', 'python')
+  const useV2 = existsSync(mlPython)
+  const python = useV2 ? mlPython : 'python3'
+  const script = join(base, 'scripts', useV2 ? 'transcribe_v2.py' : 'transcribe.py')
+  const proc = await new Promise<{ status: number | null; stdout: string; stderr: string }>(
+    (resolve) => {
+      // 스레드 상한: 전 코어 풀가동 대신 8스레드 — 발열↓, 속도 손실은 미미
+      const p = spawn(python, [script, job.tmp, job.sensitivity], {
+        env: { ...process.env, OMP_NUM_THREADS: '8', MKL_NUM_THREADS: '8' },
+      })
+      job.proc = p
+      let stdout = ''
+      let stderr = ''
+      p.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
+      p.stderr.on('data', (d: Buffer) => {
+        const text = d.toString()
+        stderr += text
+        // 진행률 줄 파싱: "PROGRESS 45 보컬 채보"
+        for (const line of text.split('\n')) {
+          const pm = /^PROGRESS (\d+) (.+)$/.exec(line.trim())
+          if (pm) {
+            job.progress = Math.min(99, Number(pm[1]))
+            job.stage = pm[2]
+          }
+        }
+      })
+      // 8분 곡을 CPU로 처리하면 20분+ 걸릴 수 있다 (촘촘 모드는 다중 시도라 그 이상)
+      const timer = setTimeout(
+        () => p.kill('SIGKILL'),
+        job.sensitivity === 'dense' ? 5400_000 : 2400_000,
+      )
+      p.on('close', (code) => {
+        clearTimeout(timer)
+        resolve({ status: code, stdout, stderr })
+      })
+      p.on('error', () => {
+        clearTimeout(timer)
+        resolve({ status: -1, stdout, stderr: stderr || 'spawn failed' })
+      })
+    },
+  )
+  job.proc = null
+  if ((job.status as string) === 'cancelled') return null
+  if (proc.status !== 0) {
+    // PROGRESS 줄을 걷어내고 마지막(트레이스백) 위주로 기록
+    const trace = (proc.stderr ?? '')
+      .split('\n')
+      .filter((l) => !l.startsWith('PROGRESS '))
+      .join('\n')
+      .slice(-1000)
+    console.error('transcribe failed (exit', proc.status, '):', trace)
+    throw new Error(
+      proc.status === null || proc.status > 128
+        ? '처리 시간 초과 또는 메모리 부족으로 중단됐습니다. 잠시 후 다시 시도해주세요.'
+        : 'AI 채보 실행 실패 (서버 로그 확인)',
+    )
+  }
+  return JSON.parse(proc.stdout) as TranscribeResult
+}
+
 async function runTranscribeJob(job: TranscribeJob): Promise<void> {
   // 완료된 잡은 1시간 뒤 정리
   for (const [id, j] of transcribeJobs) {
@@ -643,72 +776,11 @@ async function runTranscribeJob(job: TranscribeJob): Promise<void> {
   job.status = 'running'
   job.stage = '준비 중'
   try {
-    // v2(상업 안전 스택) 우선, ML venv 없으면 v1 폴백
-    const base = join(dirname(fileURLToPath(import.meta.url)), '..')
-    const mlPython = join(base, 'ml', '.venv', 'bin', 'python')
-    const useV2 = existsSync(mlPython)
-    const python = useV2 ? mlPython : 'python3'
-    const script = join(base, 'scripts', useV2 ? 'transcribe_v2.py' : 'transcribe.py')
-    const proc = await new Promise<{ status: number | null; stdout: string; stderr: string }>(
-      (resolve) => {
-        // 스레드 상한: 전 코어 풀가동 대신 8스레드 — 발열↓, 속도 손실은 미미
-        const p = spawn(python, [script, job.tmp, job.sensitivity], {
-          env: { ...process.env, OMP_NUM_THREADS: '8', MKL_NUM_THREADS: '8' },
-        })
-        job.proc = p
-        let stdout = ''
-        let stderr = ''
-        p.stdout.on('data', (d: Buffer) => (stdout += d.toString()))
-        p.stderr.on('data', (d: Buffer) => {
-          const text = d.toString()
-          stderr += text
-          // 진행률 줄 파싱: "PROGRESS 45 보컬 채보"
-          for (const line of text.split('\n')) {
-            const pm = /^PROGRESS (\d+) (.+)$/.exec(line.trim())
-            if (pm) {
-              job.progress = Math.min(99, Number(pm[1]))
-              job.stage = pm[2]
-            }
-          }
-        })
-        // 8분 곡을 CPU로 처리하면 20분+ 걸릴 수 있다 (촘촘 모드는 다중 시도라 그 이상)
-        const timer = setTimeout(
-          () => p.kill('SIGKILL'),
-          job.sensitivity === 'dense' ? 5400_000 : 2400_000,
-        )
-        p.on('close', (code) => {
-          clearTimeout(timer)
-          resolve({ status: code, stdout, stderr })
-        })
-        p.on('error', () => {
-          clearTimeout(timer)
-          resolve({ status: -1, stdout, stderr: stderr || 'spawn failed' })
-        })
-      },
-    )
-    job.proc = null
-    if ((job.status as string) === 'cancelled') return
-    if (proc.status !== 0) {
-      // PROGRESS 줄을 걷어내고 마지막(트레이스백) 위주로 기록
-      const trace = (proc.stderr ?? '')
-        .split('\n')
-        .filter((l) => !l.startsWith('PROGRESS '))
-        .join('\n')
-        .slice(-1000)
-      console.error('transcribe failed (exit', proc.status, '):', trace)
-      throw new Error(
-        proc.status === null || proc.status > 128
-          ? '처리 시간 초과 또는 메모리 부족으로 중단됐습니다. 잠시 후 다시 시도해주세요.'
-          : 'AI 채보 실행 실패 (서버 로그 확인)',
-      )
-    }
-    const result = JSON.parse(proc.stdout) as {
-      tracks?: TranscribeTracks
-      bpm?: number | null
-      lyrics?: string
-      timbres?: { guitar?: string; other?: string }
-      error?: string
-    }
+    const modalCfg = loadModalConfig()
+    const result = modalCfg
+      ? await runRemoteTranscribe(job, modalCfg)
+      : await runLocalTranscribe(job)
+    if (result === null) return // 중지됨
     const tracks = result.tracks ?? {}
     const totalNotes =
       (tracks.vocals?.length ?? 0) +

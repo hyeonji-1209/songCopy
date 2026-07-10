@@ -34,7 +34,13 @@ def report(pct, stage):
     sys.__stderr__.write(f"PROGRESS {pct} {stage}\n")
     sys.__stderr__.flush()
 MELODIC_STEMS = ("vocals", "guitar", "piano", "other", "bass")
-MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ml", "models")
+# GPU 워커(Modal 등) 배포 시 환경변수로 경로/디바이스/병렬도 재지정 가능
+MODEL_DIR = os.environ.get(
+    "SONGCOPY_MODEL_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ml", "models"),
+)
+DEVICE = os.environ.get("SONGCOPY_DEVICE", "cpu")  # 'cpu' | 'cuda'
+STEM_WORKERS = int(os.environ.get("SONGCOPY_STEM_WORKERS", "2"))  # GPU에서는 1 권장
 
 
 class BeatGrid:
@@ -149,7 +155,7 @@ def transcribe_yourmt3(path, sensitivity="standard"):
 
     y, _ = librosa.load(path, sr=16000, mono=True)
     kwargs = {"adaptive": True, "num_attempts": 2} if sensitivity == "dense" else {}
-    mid = api.transcribe(y, model="yourmt3", sr=16000, **kwargs)
+    mid = api.transcribe(y, model="yourmt3", sr=16000, device=DEVICE if DEVICE != "cpu" else "auto", **kwargs)
     with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as f:
         tmp = f.name
     try:
@@ -165,11 +171,10 @@ def transcribe_transkun(path):
         tmp = f.name
     try:
         bin_dir = os.path.dirname(sys.executable)
-        r = subprocess.run(
-            [os.path.join(bin_dir, "transkun"), path, tmp],
-            capture_output=True,
-            timeout=600,
-        )
+        cmd = [os.path.join(bin_dir, "transkun"), path, tmp]
+        if DEVICE != "cpu":
+            cmd += ["--device", DEVICE]
+        r = subprocess.run(cmd, capture_output=True, timeout=600)
         if r.returncode != 0:
             return []
         return midi_file_to_notes(tmp)
@@ -271,7 +276,11 @@ def extract_lyrics_fw(path):
     try:
         from faster_whisper import WhisperModel
 
-        model = WhisperModel(os.environ.get("WHISPER_MODEL", "medium"), compute_type="int8")
+        model = WhisperModel(
+            os.environ.get("WHISPER_MODEL", "medium"),
+            device=DEVICE if DEVICE != "cpu" else "cpu",
+            compute_type="float16" if DEVICE == "cuda" else "int8",
+        )
         segments, _info = model.transcribe(
             path,
             vad_filter=True,
@@ -300,7 +309,7 @@ def classify_timbres(stems):
         import numpy as np
         from panns_inference import AudioTagging, labels
 
-        at = AudioTagging(checkpoint_path=None, device="cpu")
+        at = AudioTagging(checkpoint_path=None, device=DEVICE)
 
         def top_labels(path, topk=12):
             y, _ = librosa.load(path, sr=32000, mono=True, duration=90, offset=10)
@@ -469,32 +478,54 @@ def main() -> None:
                 for n in (*MELODIC_STEMS, "drums")
                 if stems.get(n) and stem_has_content(stems[n])
             ]
-            report(38, "악기별 채보 (2개 병렬)")
-            import concurrent.futures as cf
+            def collect(name, result):
+                if name == "drums":
+                    events = [{"kind": e["kind"], "slot": grid.to_slot(e["t"])} for e in result]
+                    if len(events) >= 8:
+                        out["tracks"]["drums"] = events
+                elif len(result) >= 8:
+                    for n in result:
+                        n["qs"] = grid.to_slot(n["start"])
+                        n["qd"] = grid.dur_slots(n["start"], n["end"])
+                    out["tracks"][name] = result
 
             done_ct = 0
-            with cf.ProcessPoolExecutor(max_workers=2, initializer=_worker_init) as pool:
-                futures = {pool.submit(_stem_task, t): t[0] for t in tasks}
-                for fut in cf.as_completed(futures):
-                    name = futures[fut]
+            if STEM_WORKERS <= 1:
+                # GPU 등 단일 컨텍스트: 프로세스 안에서 순차 (모델/CUDA 재사용)
+                report(38, "악기별 채보")
+                for t in tasks:
+                    try:
+                        result = _stem_task(t)
+                        collect(t[0], result)
+                    except Exception:
+                        import traceback
+
+                        traceback.print_exc(file=sys.__stderr__)
                     done_ct += 1
                     report(
                         38 + round(50 * done_ct / max(1, len(tasks))),
-                        f"{STEM_LABEL.get(name, name)} 채보 완료 ({done_ct}/{len(tasks)})",
+                        f"{STEM_LABEL.get(t[0], t[0])} 채보 완료 ({done_ct}/{len(tasks)})",
                     )
-                    try:
-                        result = fut.result()
-                    except Exception:
-                        continue
-                    if name == "drums":
-                        events = [{"kind": e["kind"], "slot": grid.to_slot(e["t"])} for e in result]
-                        if len(events) >= 8:
-                            out["tracks"]["drums"] = events
-                    elif len(result) >= 8:
-                        for n in result:
-                            n["qs"] = grid.to_slot(n["start"])
-                            n["qd"] = grid.dur_slots(n["start"], n["end"])
-                        out["tracks"][name] = result
+            else:
+                report(38, f"악기별 채보 ({STEM_WORKERS}개 병렬)")
+                import concurrent.futures as cf
+
+                with cf.ProcessPoolExecutor(max_workers=STEM_WORKERS, initializer=_worker_init) as pool:
+                    futures = {pool.submit(_stem_task, t): t[0] for t in tasks}
+                    for fut in cf.as_completed(futures):
+                        name = futures[fut]
+                        done_ct += 1
+                        report(
+                            38 + round(50 * done_ct / max(1, len(tasks))),
+                            f"{STEM_LABEL.get(name, name)} 채보 완료 ({done_ct}/{len(tasks)})",
+                        )
+                        try:
+                            collect(name, fut.result())
+                        except Exception:
+                            import traceback
+
+                            traceback.print_exc(file=sys.__stderr__)
+                            continue
 
             if out["tracks"]["vocals"]:
                 report(90, "가사 추출")

@@ -3,3 +3,5 @@ ml/models/
 ml/ADTOF-pytorch/
 .mt3_checkpoints/
 scripts/__pycache__/
+.modal-token
+.modal.json
