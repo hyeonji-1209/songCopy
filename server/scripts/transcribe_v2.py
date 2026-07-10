@@ -214,8 +214,8 @@ DRUM_KIND = {
 }
 
 
-def transcribe_drums_yourmt3(path, grid):
-    """YourMT3 드럼 채보 — 가중치 Apache-2.0 (상업 안전).
+def transcribe_drums_yourmt3(path):
+    """YourMT3 드럼 채보 — 가중치 Apache-2.0 (상업 안전). 반환: [{kind, t(초)}]
 
     실측(실곡 드럼 스템): ADTOF와 킥 235↔240, 히트 76% 일치 — 뼈대 동일, 탐/햇을 더 잡는 경향.
     """
@@ -237,11 +237,33 @@ def transcribe_drums_yourmt3(path, grid):
             for n in inst.notes:
                 kind = DRUM_KIND.get(n.pitch)
                 if kind:
-                    events.append({"kind": kind, "slot": grid.to_slot(float(n.start))})
+                    events.append({"kind": kind, "t": float(n.start)})
         return events
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
+
+
+def _worker_init():
+    # 워커 2개가 코어를 나눠 쓰도록 스레드 상한 축소 (과할당 방지)
+    os.environ["OMP_NUM_THREADS"] = "5"
+    os.environ["MKL_NUM_THREADS"] = "5"
+
+
+def _stem_task(args):
+    """워커 프로세스에서 스템 하나 채보 (모델은 워커당 1회 로드 후 재사용)"""
+    name, path, sensitivity = args
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        if name == "drums":
+            return transcribe_drums_yourmt3(path)
+        if name == "piano":
+            notes = transcribe_transkun(path)
+        else:
+            notes = transcribe_yourmt3(path, sensitivity)
+        if len(notes) < 8:  # SOTA 모델이 못 잡는 음색 → basic-pitch 폴백
+            notes = transcribe_basic_pitch(path, sensitivity)
+        return notes
 
 
 def extract_lyrics_fw(path):
@@ -438,36 +460,41 @@ def main() -> None:
             report(35, "음색 판별")
             out["timbres"] = classify_timbres(stems)
 
-            STEM_LABEL = {"vocals": "보컬", "guitar": "기타", "piano": "피아노", "other": "신스", "bass": "베이스"}
-            present = [n for n in MELODIC_STEMS if stems.get(n)]
-            for i, name in enumerate(MELODIC_STEMS):
-                path = stems.get(name)
-                if not path or not stem_has_content(path):
-                    continue
-                report(38 + round(40 * (present.index(name) / max(1, len(present)))), f"{STEM_LABEL[name]} 채보")
-                try:
-                    if name == "piano":
-                        notes = transcribe_transkun(path)
-                    else:
-                        notes = transcribe_yourmt3(path, sensitivity)
-                    if len(notes) < 8:  # SOTA 모델이 못 잡는 음색 → basic-pitch 폴백
-                        notes = transcribe_basic_pitch(path, sensitivity)
-                    if len(notes) >= 8:
-                        for n in notes:
+            STEM_LABEL = {
+                "vocals": "보컬", "guitar": "기타", "piano": "피아노",
+                "other": "신스", "bass": "베이스", "drums": "드럼",
+            }
+            tasks = [
+                (n, stems[n], sensitivity)
+                for n in (*MELODIC_STEMS, "drums")
+                if stems.get(n) and stem_has_content(stems[n])
+            ]
+            report(38, "악기별 채보 (2개 병렬)")
+            import concurrent.futures as cf
+
+            done_ct = 0
+            with cf.ProcessPoolExecutor(max_workers=2, initializer=_worker_init) as pool:
+                futures = {pool.submit(_stem_task, t): t[0] for t in tasks}
+                for fut in cf.as_completed(futures):
+                    name = futures[fut]
+                    done_ct += 1
+                    report(
+                        38 + round(50 * done_ct / max(1, len(tasks))),
+                        f"{STEM_LABEL.get(name, name)} 채보 완료 ({done_ct}/{len(tasks)})",
+                    )
+                    try:
+                        result = fut.result()
+                    except Exception:
+                        continue
+                    if name == "drums":
+                        events = [{"kind": e["kind"], "slot": grid.to_slot(e["t"])} for e in result]
+                        if len(events) >= 8:
+                            out["tracks"]["drums"] = events
+                    elif len(result) >= 8:
+                        for n in result:
                             n["qs"] = grid.to_slot(n["start"])
                             n["qd"] = grid.dur_slots(n["start"], n["end"])
-                        out["tracks"][name] = notes
-                except Exception:
-                    pass
-
-            if "drums" in stems and stem_has_content(stems["drums"]):
-                report(80, "드럼 채보")
-                try:
-                    drums = transcribe_drums_yourmt3(stems["drums"], grid)
-                    if len(drums) >= 8:
-                        out["tracks"]["drums"] = drums
-                except Exception:
-                    pass
+                        out["tracks"][name] = result
 
             if out["tracks"]["vocals"]:
                 report(90, "가사 추출")
