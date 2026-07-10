@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@breezystack/lamejs": "^1.2.7",
     "@coderline/alphatab": "^1.8.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

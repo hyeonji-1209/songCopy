@@ -5,7 +5,7 @@
  * 브라우저가 디코딩할 수 있는 모든 포맷(mp3/wav/ogg/m4a/flac…)을 받는다.
  */
 const TARGET_RATE = 22050
-const MAX_SECONDS = 180 // 분석 상한 3분 (악보 변환도 64마디 컷)
+const MAX_SECONDS = 480 // 분석 상한 8분 (모노 22kHz 기준 서버 32MB 제한 내)
 
 export async function audioFileToMonoWav(file: File): Promise<Uint8Array> {
   const raw = await file.arrayBuffer()

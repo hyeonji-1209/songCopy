@@ -127,7 +127,7 @@ export default function NewTabMenu() {
             <button className="auth-submit" type="submit" disabled={aiBusy || !aiTitle.trim()}>
               {aiBusy ? '접수 중…' : '악보 만들기'}
             </button>
-            <span className="panel-note">mp3/wav/m4a 등 — 앞 3분까지 분석. BPM 비우면 자동 감지.</span>
+            <span className="panel-note">mp3/wav/m4a 등 — 최대 8분까지 분석. BPM 비우면 자동 감지.</span>
           </form>
           <div className="newtab-divider">또는</div>
           <OpenFileButton className="upload-btn newtab-upload">

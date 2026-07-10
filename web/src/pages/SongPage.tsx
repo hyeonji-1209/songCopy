@@ -15,6 +15,7 @@ import {
   type RevisionInfo,
   type SongMeta,
 } from '../lib/api'
+import { exportMp3, exportSheetPng } from '../lib/exporters'
 import { toggleFavorite, useFavorites } from '../lib/favorites'
 import { setTheme, useTheme } from '../lib/theme'
 import { useUpload } from '../lib/uploadStore'
@@ -131,6 +132,7 @@ export default function SongPage() {
   const undoStack = useRef<EditOp[]>([])
   const redoStack = useRef<EditOp[]>([])
   const [editHint, setEditHint] = useState<string | null>(null)
+  const [exporting, setExporting] = useState<string | null>(null) // 'png' | 'mp3 45%' 등
   const pendingDigitRef = useRef<{ d: number; t: number } | null>(null)
   const midiReloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -754,6 +756,37 @@ export default function SongPage() {
 
   const downloadMidi = () => apiRef.current?.downloadMidi()
 
+  // 악보 PNG: 지금 보이는 트랙 구성 그대로 (파트별 = 그 트랙만 보거나 믹서의 ⬇ 사용)
+  const exportPng = async (trackIndexes?: number[], nameSuffix?: string) => {
+    const api = apiRef.current
+    if (!api?.score || exporting) return
+    setExporting('png')
+    try {
+      const indexes = trackIndexes ?? api.tracks.map((t) => t.index)
+      await exportSheetPng(api, indexes, `${title}${nameSuffix ? `_${nameSuffix}` : '_악보'}`, PRINT_RESOURCES)
+    } catch (e) {
+      console.error('PNG export failed', e)
+      alert('PNG 내보내기에 실패했습니다')
+    } finally {
+      setExporting(null)
+    }
+  }
+
+  // MP3: 현재 믹서 상태(솔로/뮤트/볼륨) 그대로 신스 렌더
+  const exportAudioMp3 = async () => {
+    const api = apiRef.current
+    if (!api?.score || exporting) return
+    setExporting('mp3 0%')
+    try {
+      await exportMp3(api, tracks, title, (pct) => setExporting(`mp3 ${pct}%`))
+    } catch (e) {
+      console.error('MP3 export failed', e)
+      alert('MP3 내보내기에 실패했습니다')
+    } finally {
+      setExporting(null)
+    }
+  }
+
   const downloadGp = () => {
     const api = apiRef.current
     if (!api?.score) return
@@ -1220,6 +1253,14 @@ export default function SongPage() {
                   <button className="chip" onClick={() => printTrack(t.index)} title="이 악기 악보만 인쇄">
                     <Icon name="print" />
                   </button>
+                  <button
+                    className="chip"
+                    onClick={() => void exportPng([t.index], t.name)}
+                    disabled={!!exporting}
+                    title="이 악기 악보만 PNG로 저장"
+                  >
+                    <Icon name="download" />
+                  </button>
                   <input
                     className="track-vol side-vol"
                     type="range"
@@ -1426,6 +1467,23 @@ export default function SongPage() {
                 <button className="chip" onClick={print}>
                   <Icon name="print" /> 인쇄
                 </button>
+                <button
+                  className="chip"
+                  onClick={() => void exportPng()}
+                  disabled={!!exporting}
+                  title="지금 보이는 악보를 PNG 이미지로 저장"
+                >
+                  <Icon name="download" /> {exporting === 'png' ? '저장 중…' : 'PNG 악보'}
+                </button>
+                <button
+                  className="chip"
+                  onClick={() => void exportAudioMp3()}
+                  disabled={!!exporting}
+                  title="현재 믹서 상태 그대로 오디오를 MP3로 저장"
+                >
+                  <Icon name="download" />{' '}
+                  {exporting?.startsWith('mp3') ? `MP3 ${exporting.slice(4)}` : 'MP3 오디오'}
+                </button>
                 <button className="chip" onClick={downloadMidi}>
                   <Icon name="download" /> MIDI
                 </button>
@@ -1433,6 +1491,9 @@ export default function SongPage() {
                   <Icon name="download" /> .gp
                 </button>
               </div>
+              <p className="panel-note">
+                파트별 악보 = 믹서에서 그 악기의 ⬇ (또는 트랙만 보기 후 PNG)
+              </p>
             </div>
             <div className="side-section">
               <span className="panel-title">설정</span>

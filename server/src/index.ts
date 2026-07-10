@@ -230,7 +230,7 @@ const BASS_TUNING = [43, 38, 33, 28] // g2 d2 a1 e1
 
 // 16분음표 그리드: 빠른 프레이즈·잔음까지 보존
 const SLOTS_PER_BAR = 16
-const MAX_BARS = 128
+const MAX_BARS = 256 // 112BPM 4/4 기준 약 9분
 const DUR: Record<number, string> = { 1: ':16', 2: ':8', 4: ':4', 8: ':2', 16: ':1' }
 const fitDur = (avail: number) =>
   avail >= 16 ? 16 : avail >= 8 ? 8 : avail >= 4 ? 4 : avail >= 2 ? 2 : 1
@@ -855,7 +855,7 @@ const server = http.createServer(async (req, res) => {
       const title = body.title?.trim()
       if (!title || !body.b64) return json(res, 400, { error: '제목과 오디오 파일이 필요합니다' })
       const audio = Buffer.from(body.b64, 'base64')
-      if (audio.length > 15_000_000) return json(res, 413, { error: '오디오는 15MB 이하만 가능합니다' })
+      if (audio.length > 32_000_000) return json(res, 413, { error: '오디오는 32MB 이하만 가능합니다 (약 8분)' })
       const ext = /^[a-z0-9]{1,5}$/.test(body.ext ?? '') ? body.ext : 'wav'
 
       // 사용자당 활성 잡 1개 (중복 제출 방지)
