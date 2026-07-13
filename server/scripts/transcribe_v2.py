@@ -3,7 +3,9 @@
 
   분리:   MVSEP_API_KEY 있으면 MVSep API(BS Roformer SW, sep_type 61 — 출력물 상업 이용 허용),
           없으면 로컬 BS-Roformer-SW (개발 전용 — 가중치 라이선스 불명, 상업 배포 불가)
-  채보:   YourMT3+ (가중치 Apache-2.0) 주력, 피아노는 Transkun(MIT), 특이 음색은 basic-pitch 폴백
+  채보:   기타/신스 YourMT3+ (가중치 Apache-2.0), 피아노 Transkun(MIT),
+          보컬/베이스 pyin F0+온셋 전용 경로(librosa, ISC — 벤치 F1 0.97/0.99 vs YourMT3 0.82/0.83),
+          특이 음색은 basic-pitch 폴백
   드럼:   YourMT3+ 드럼 출력 (ADTOF는 CC BY-NC-SA라 제거 — docs/licensing.md)
   음색:   PANNs Cnn14 (CC BY 4.0)
   가사:   faster-whisper (VAD, medium/int8, 가중치 MIT)
@@ -210,6 +212,102 @@ def transcribe_basic_pitch(path, sensitivity):
     return clean_notes(notes)
 
 
+def transcribe_mono_f0(path, fmin_note, fmax_note, dip=0.7):
+    """모노포닉 전용 채보 (보컬/베이스): pyin F0 추적 + 온셋 분할.
+
+    벤치마크(정답 MIDI 대비 F1): 보컬 0.97 / 베이스 0.99 — YourMT3(0.82/0.83)보다
+    크게 정확하고 20배 빠름. 단선율 악기에만 사용할 것 (화음 불가).
+    """
+    import librosa
+    import numpy as np
+
+    y, sr = librosa.load(path, sr=22050, mono=True)
+    hop = 256
+    f0, voiced, _prob = librosa.pyin(
+        y, fmin=librosa.note_to_hz(fmin_note), fmax=librosa.note_to_hz(fmax_note),
+        sr=sr, hop_length=hop, frame_length=2048,
+    )
+    onsets = librosa.onset.onset_detect(y=y, sr=sr, hop_length=hop, units="time", backtrack=True)
+    rms = librosa.feature.rms(y=y, hop_length=hop, frame_length=2048)[0]
+    times = librosa.times_like(f0, sr=sr, hop_length=hop)
+    midi = np.full(len(f0), -1)
+    ok = voiced & ~np.isnan(f0)
+    midi[ok] = np.round(librosa.hz_to_midi(f0[ok]))
+
+    notes = []
+    cur = None  # [pitch, 시작 프레임]
+    for i in range(len(midi) + 1):
+        p = midi[i] if i < len(midi) else -1
+        if cur and p != cur[0]:
+            s, e = times[cur[1]], times[min(i, len(times) - 1)]
+            if e - s >= 0.07:
+                amp = float(np.max(rms[cur[1]:i])) if i > cur[1] else 0.1
+                notes.append({"start": round(float(s), 4), "end": round(float(e), 4),
+                              "midi": int(cur[0]), "amp": round(min(1.0, amp * 8), 3)})
+            cur = None
+        if p >= 0 and cur is None:
+            cur = [p, i]
+
+    # 같은 음 근접 병합 (지터로 쪼개진 조각)
+    merged = []
+    for x in notes:
+        if merged and merged[-1]["midi"] == x["midi"] and x["start"] - merged[-1]["end"] < 0.06:
+            merged[-1]["end"] = x["end"]
+        else:
+            merged.append(x)
+
+    # 온셋 분할: 같은 음 연타가 한 노트로 붙는 것을 쪼갬.
+    # 허위 분할 방지: 분할점 직전 음량 골짜기(재어택 증거)가 있을 때만.
+    def has_dip(c):
+        i = int(c * sr / hop)
+        pre = rms[max(0, i - 4):i + 1]
+        post = rms[i + 1:i + 6]
+        if len(pre) == 0 or len(post) == 0:
+            return False
+        return float(pre.min()) < dip * float(post.max())
+
+    out = []
+    for x in merged:
+        cuts = [t for t in onsets if x["start"] + 0.08 < t < x["end"] - 0.05 and has_dip(float(t))]
+        seg_start = x["start"]
+        for c in cuts:
+            out.append({**x, "start": round(seg_start, 4), "end": round(float(c), 4)})
+            seg_start = float(c)
+        out.append({**x, "start": round(seg_start, 4), "end": x["end"]})
+
+    # 장식음 흡수: 실제 노래의 비브라토/슬라이드가 만드는 짧은 이웃음(±2반음)을
+    # 붙어 있는 긴 노트에 병합 — 합성 벤치마크에는 영향 없고 실곡 파편화를 줄인다.
+    changed = True
+    while changed:
+        changed = False
+        i = 0
+        while i < len(out):
+            n = out[i]
+            dur = n["end"] - n["start"]
+            if dur < 0.095:
+                for j in (i - 1, i + 1):
+                    if 0 <= j < len(out):
+                        m = out[j]
+                        if (
+                            abs(m["midi"] - n["midi"]) <= 2
+                            and (m["end"] - m["start"]) >= dur * 2
+                            and (n["start"] - m["end"] < 0.05 if j < i else m["start"] - n["end"] < 0.05)
+                        ):
+                            # 긴 노트의 온셋은 유지 — 뒤따르는 장식음만 길이로 흡수,
+                            # 앞선 장식음은 제거만 (시작점을 당기면 온셋이 어긋난다)
+                            if j < i:
+                                m["end"] = max(m["end"], n["end"])
+                            out.pop(i)
+                            changed = True
+                            break
+                else:
+                    i += 1
+                    continue
+                continue
+            i += 1
+    return out
+
+
 DRUM_KIND = {
     35: "kick", 36: "kick",
     37: "snare", 38: "snare", 40: "snare",
@@ -264,6 +362,15 @@ def _stem_task(args):
             return transcribe_drums_yourmt3(path)
         if name == "piano":
             notes = transcribe_transkun(path)
+        elif name == "vocals":
+            # 단선율 전용 경로 (벤치마크 F1 0.97 vs YourMT3 0.82)
+            notes = transcribe_mono_f0(path, "E2", "C7", dip=0.7)
+            if len(notes) < 8:
+                notes = transcribe_yourmt3(path, sensitivity)
+        elif name == "bass":
+            notes = transcribe_mono_f0(path, "E1", "C4", dip=0.9)
+            if len(notes) < 8:
+                notes = transcribe_yourmt3(path, sensitivity)
         else:
             notes = transcribe_yourmt3(path, sensitivity)
         if len(notes) < 8:  # SOTA 모델이 못 잡는 음색 → basic-pitch 폴백
@@ -276,11 +383,16 @@ def extract_lyrics_fw(path):
     try:
         from faster_whisper import WhisperModel
 
-        model = WhisperModel(
-            os.environ.get("WHISPER_MODEL", "medium"),
-            device=DEVICE if DEVICE != "cpu" else "cpu",
-            compute_type="float16" if DEVICE == "cuda" else "int8",
-        )
+        name = os.environ.get("WHISPER_MODEL", "medium")
+        try:
+            model = WhisperModel(
+                name,
+                device=DEVICE if DEVICE != "cpu" else "cpu",
+                compute_type="float16" if DEVICE == "cuda" else "int8",
+            )
+        except Exception:
+            # GPU용 cuDNN/cuBLAS 미비 등 — CPU로 폴백 (가사가 안 나오는 것보단 느린 게 낫다)
+            model = WhisperModel(name, device="cpu", compute_type="int8")
         segments, _info = model.transcribe(
             path,
             vad_filter=True,

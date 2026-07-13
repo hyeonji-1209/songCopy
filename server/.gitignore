@@ -5,3 +5,8 @@ ml/ADTOF-pytorch/
 scripts/__pycache__/
 .modal-token
 .modal.json
+ml/__pycache__/
+scripts/bench/*.wav
+scripts/bench/*.mid
+scripts/bench/*.sf2
+scripts/bench/bench_gt.json

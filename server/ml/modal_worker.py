@@ -53,6 +53,13 @@ image = (
     )
     # basic-pitch는 리눅스에서 py3.12 미지원 TF를 강제 요구 → 의존성 없이 설치 (ONNX로 구동)
     .pip_install("basic-pitch==0.3.0", extra_options="--no-deps")
+    # faster-whisper(ctranslate2) GPU 실행용 CUDA 라이브러리
+    .pip_install("nvidia-cublas-cu12", "nvidia-cudnn-cu12>=9")
+    .env(
+        {
+            "LD_LIBRARY_PATH": "/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.12/site-packages/nvidia/cudnn/lib"
+        }
+    )
     .add_local_file(os.path.join(SCRIPT_DIR, "..", "scripts", "transcribe_v2.py"), "/app/transcribe_v2.py")
 )
 
